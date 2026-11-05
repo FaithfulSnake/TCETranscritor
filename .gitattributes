@@ -1,0 +1,9 @@
+# Scripts precisam de fim de linha LF para rodar no Termux/Linux
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+tce/tce text eol=lf
+tce/termux-url-opener text eol=lf
+tce/termux-file-editor text eol=lf
+*.wav binary
+*.bin binary

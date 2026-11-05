@@ -1,0 +1,53 @@
+name: Diagnóstico — YouTube a partir da nuvem
+
+# Verifica se os servidores do GitHub conseguem baixar áudio e legendas do
+# canal do TCE-MA. Não altera nada no repositório.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/diagnostico-youtube.yml
+
+permissions:
+  contents: read
+
+jobs:
+  youtube:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Instalar ffmpeg, yt-dlp e deno
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          python3 -m pip install -q -U "yt-dlp[default]"
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y >/dev/null
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+      - name: Versões
+        run: yt-dlp --version; deno --version | head -1; ffmpeg -version | head -1
+      - name: Listar lives do canal TCEMA.OFICIAL
+        continue-on-error: true
+        run: |
+          yt-dlp --flat-playlist -I 1:6 --print "%(id)s | %(title)s | %(duration)s | %(live_status)s" \
+            "https://www.youtube.com/@TCEMAOFICIAL/streams" | tee lista.txt
+      - name: Formatos de uma sessão
+        continue-on-error: true
+        run: |
+          ID=$(grep -i "sess" lista.txt | head -1 | cut -d' ' -f1)
+          echo "ID=$ID" | tee -a "$GITHUB_ENV"
+          yt-dlp -F "https://www.youtube.com/watch?v=$ID" | tail -40
+      - name: Baixar 2 minutos de áudio
+        continue-on-error: true
+        run: |
+          yt-dlp -f "ba[abr<=?96]/ba/b" --download-sections "*0:00-2:00" \
+            -o "teste.%(ext)s" "https://www.youtube.com/watch?v=$ID"
+          ls -la teste.* && ffprobe -hide_banner teste.* 2>&1 | tail -5
+      - name: Baixar legenda automática
+        continue-on-error: true
+        run: |
+          yt-dlp --skip-download --write-auto-subs --write-subs --sub-langs "pt.*,pt" \
+            --sub-format json3 -o "legenda.%(ext)s" "https://www.youtube.com/watch?v=$ID"
+          ls -la legenda.* && head -c 600 legenda.*
