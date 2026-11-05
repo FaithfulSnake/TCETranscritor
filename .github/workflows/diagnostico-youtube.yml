@@ -1,12 +1,12 @@
 name: Diagnóstico — YouTube a partir da nuvem
 
 # Verifica se os servidores do GitHub conseguem baixar áudio e legendas do
-# canal do TCE-MA. Não altera nada no repositório.
+# canal do TCE-MA. Não altera nada no repositório. Rode pela aba Actions.
+# Resultado em 05/11/2026: a lista de vídeos funciona, mas o download é
+# bloqueado ("Sign in to confirm you're not a bot") - por isso o áudio é
+# baixado pelo celular e só a transcrição roda na nuvem.
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - .github/workflows/diagnostico-youtube.yml
 
 permissions:
   contents: read

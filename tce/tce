@@ -1,0 +1,497 @@
+#!/usr/bin/env bash
+# TCE Transcritor - comando principal (Termux/Android ou Linux).
+#   tce              -> menu
+#   tce ajuda        -> todos os comandos
+set -uo pipefail
+
+TCE_DADOS="${TCE_DADOS:-$HOME/.local/share/tce}"
+TCE_APP="${TCE_APP:-$TCE_DADOS/app}"
+TCE_CONFIG="${TCE_CONFIG:-$HOME/.config/tce/config}"
+TCE_TOKEN="${TCE_TOKEN:-$HOME/.config/tce/token}"
+MOTOR="$TCE_APP/tce/motor.py"
+MODELOS_DIR="$TCE_DADOS/modelos"
+BIN_DIR="$TCE_DADOS/bin"
+HF="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+HF_VAD="https://huggingface.co/ggml-org/whisper-vad/resolve/main"
+VAD_ARQ="ggml-silero-v6.2.0.bin"
+
+# ---- configuração (o arquivo ~/.config/tce/config pode mudar qualquer uma) ----
+PASTA_SAIDA=""
+MODELO_AOVIVO="small"
+MODELO_FIEL="turbo"
+THREADS=""
+FIEL_DEPOIS_DA_LIVE="perguntar"     # perguntar | celular | nuvem | nao
+GUARDAR_AUDIO=1
+NOTIFICAR=0
+PROMPT=""
+REPO=""
+MODELO_NUVEM="turbo"
+PARTES_NUVEM=8
+# shellcheck source=/dev/null
+[ -f "$TCE_CONFIG" ] && . "$TCE_CONFIG"
+
+if [ -z "$PASTA_SAIDA" ]; then
+  if [ -d "$HOME/storage/downloads" ]; then
+    PASTA_SAIDA="$HOME/storage/downloads/TCE-Transcricoes"
+  else
+    PASTA_SAIDA="$HOME/TCE-Transcricoes"
+  fi
+fi
+if [ -z "$THREADS" ]; then
+  n=$(nproc 2>/dev/null || echo 4)
+  THREADS=$(( n >= 4 ? 4 : n ))
+fi
+if [ -z "$REPO" ]; then
+  REPO=$(git -C "$TCE_APP" remote get-url origin 2>/dev/null \
+         | sed -E 's#^.*github\.com[:/]+##; s#\.git$##' || true)
+  [ -n "$REPO" ] || REPO="FaithfulSnake/TCETranscritor"
+fi
+
+WHISPER="$BIN_DIR/whisper-cli"
+[ -x "$WHISPER" ] || WHISPER="$(command -v whisper-cli || echo whisper-cli)"
+if [ -x "$TCE_DADOS/venv/bin/python" ]; then        # Linux comum (no Termux não há venv)
+  PY="$TCE_DADOS/venv/bin/python"
+  export TCE_YTDLP="$TCE_DADOS/venv/bin/yt-dlp" PATH="$TCE_DADOS/venv/bin:$PATH"
+else
+  PY="$(command -v python3 || command -v python)"
+fi
+
+export TCE_DADOS TCE_WHISPER="$WHISPER" TCE_VAD="$MODELOS_DIR/$VAD_ARQ" \
+       TCE_THREADS="$THREADS" TCE_SAIDA="$PASTA_SAIDA" TCE_NOTIFICAR="$NOTIFICAR" \
+       TCE_GUARDAR_AUDIO="$GUARDAR_AUDIO" TCE_REPO="$REPO" TCE_TOKEN \
+       TCE_MODELO_NUVEM="$MODELO_NUVEM" TCE_PARTES_NUVEM="$PARTES_NUVEM"
+[ -n "$PROMPT" ] && export TCE_PROMPT="$PROMPT"
+
+# ---------------------------------------------------------------------------
+negrito() { printf '\033[1m%s\033[0m\n' "$*"; }
+titulo()  { echo; negrito "== $* =="; }
+falha()   { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+
+arquivo_modelo() {
+  case "$1" in
+    tiny)              echo "ggml-tiny-q8_0.bin" ;;
+    base)              echo "ggml-base-q8_0.bin" ;;
+    small|pequeno)     echo "ggml-small-q8_0.bin" ;;
+    medium|medio)      echo "ggml-medium-q5_0.bin" ;;
+    turbo)             echo "ggml-large-v3-turbo-q5_0.bin" ;;
+    turbo-q8)          echo "ggml-large-v3-turbo-q8_0.bin" ;;
+    large|grande)      echo "ggml-large-v3-q5_0.bin" ;;
+    *)                 echo "$1" ;;
+  esac
+}
+
+baixar() {  # baixar URL DESTINO  (retoma se cair)
+  local url="$1" destino="$2"
+  [ -s "$destino" ] && return 0
+  mkdir -p "$(dirname "$destino")"
+  echo "Baixando $(basename "$destino")..."
+  local tentativa
+  for tentativa in 1 2 3 4 5; do
+    if curl -fL --retry 5 --retry-delay 3 -C - --progress-bar -o "$destino.part" "$url"; then
+      mv -f "$destino.part" "$destino"
+      return 0
+    fi
+    echo "Falhou (tentativa $tentativa). Tentando de novo..."
+    sleep $((tentativa * 3))
+  done
+  falha "Não consegui baixar $url"
+  return 1
+}
+
+garantir_modelo() {  # garantir_modelo NOME -> imprime o caminho
+  local arq; arq="$(arquivo_modelo "$1")"
+  if [ ! -s "$MODELOS_DIR/$arq" ]; then
+    baixar "$HF/$arq" "$MODELOS_DIR/$arq" >&2 || return 1
+  fi
+  [ -s "$MODELOS_DIR/$VAD_ARQ" ] || baixar "$HF_VAD/$VAD_ARQ" "$MODELOS_DIR/$VAD_ARQ" >&2 || true
+  echo "$MODELOS_DIR/$arq"
+}
+
+motor() { "$PY" "$MOTOR" "$@"; }
+
+segurar_tela() {  # mantém o processador acordado com a tela apagada (Termux)
+  command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock 2>/dev/null || true
+}
+soltar_tela() {
+  command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock 2>/dev/null || true
+}
+trap soltar_tela EXIT
+
+checar_instalacao() {
+  if [ ! -f "$MOTOR" ]; then falha "TCE Transcritor não está instalado em $TCE_APP. Rode o instalador."; exit 1; fi
+  if ! command -v "$WHISPER" >/dev/null 2>&1 && [ ! -x "$WHISPER" ]; then
+    falha "whisper-cli não encontrado. Rode: tce reparar"; exit 1
+  fi
+}
+
+eh_link() { case "$1" in http://*|https://*|www.*|youtu*) return 0 ;; *) return 1 ;; esac; }
+
+ler_link() {  # pergunta o link (cola com toque longo > Colar)
+  local link=""
+  if command -v termux-clipboard-get >/dev/null 2>&1; then
+    local clip; clip="$(timeout 5 termux-clipboard-get 2>/dev/null || true)"
+    if eh_link "$clip"; then
+      read -r -p "Usar o link copiado? $clip  [S/n] " r
+      case "${r:-s}" in n|N) ;; *) link="$clip" ;; esac
+    fi
+  fi
+  if [ -z "$link" ]; then
+    read -r -p "Cole o link do YouTube (toque e segure > Colar) e tecle Enter: " link
+  fi
+  echo "$link" | tr -d '[:space:]'
+}
+
+# ---------------------------------------------------------------------------
+cmd_aovivo() {
+  checar_instalacao
+  local link="${1:-}"; [ -n "$link" ] || link="$(ler_link)"
+  [ -n "$link" ] || { falha "Sem link."; return 1; }
+  local modelo; modelo="$(garantir_modelo "$MODELO_AOVIVO")" || return 1
+  titulo "AO VIVO - modelo $MODELO_AOVIVO"
+  segurar_tela
+  rm -f "$TCE_DADOS/ultima_live"
+  motor aovivo "$link" --modelo "$modelo" --nome-modelo "$MODELO_AOVIVO" "${@:2}"
+  local rc=$?
+  if [ "$rc" -eq 3 ]; then
+    echo
+    read -r -p "Fazer a transcrição integral (vídeo gravado) agora? [S/n] " r
+    case "${r:-s}" in n|N) return 0 ;; esac
+    cmd_gravada "$link"
+    return
+  fi
+  local sessao=""
+  [ -f "$TCE_DADOS/ultima_live" ] && sessao="$(head -1 "$TCE_DADOS/ultima_live")"
+  [ "$rc" -eq 0 ] && [ -n "$sessao" ] || return "$rc"
+  depois_da_live "$sessao"
+}
+
+depois_da_live() {
+  local sessao="$1" escolha="$FIEL_DEPOIS_DA_LIVE"
+  if [ "$escolha" = "perguntar" ]; then
+    echo
+    negrito "A live acabou. O rascunho AO VIVO está salvo."
+    echo "Quer fazer agora a versão FIEL (modelo grande, transcrição integral)?"
+    echo "  1) No celular (pode levar horas; deixe na tomada)"
+    echo "  2) Na nuvem do GitHub (rápido, grátis; precisa ter rodado 'tce nuvem-configurar')"
+    echo "  0) Agora não (depois: 'tce fiel' ou 'tce nuvem fiel')"
+    local padrao=1; [ -s "$TCE_TOKEN" ] && padrao=2
+    echo "(sem resposta em 2 minutos, escolho $padrao)"
+    read -r -t 120 -p "Escolha [$padrao]: " escolha || true
+    escolha="${escolha:-$padrao}"
+  fi
+  case "$escolha" in
+    1|celular) cmd_fiel "$sessao" ;;
+    2|nuvem)   cmd_nuvem "$sessao" ;;
+    *)         echo "Ok. Quando quiser: tce fiel   (ou: tce nuvem fiel)" ;;
+  esac
+}
+
+cmd_gravada() {
+  checar_instalacao
+  local link="${1:-}"; [ -n "$link" ] || link="$(ler_link)"
+  [ -n "$link" ] || { falha "Sem link."; return 1; }
+  local modelo; modelo="$(garantir_modelo "$MODELO_FIEL")" || return 1
+  titulo "VÍDEO GRAVADO - versão fiel (modelo $MODELO_FIEL)"
+  segurar_tela
+  motor gravada "$link" --modelo "$modelo" --nome-modelo "$MODELO_FIEL" "${@:2}"
+  local rc=$?
+  if [ "$rc" -eq 3 ]; then
+    read -r -p "Ela está ao vivo. Transcrever AO VIVO agora? [S/n] " r
+    case "${r:-s}" in n|N) return 0 ;; esac
+    cmd_aovivo "$link"
+    return
+  fi
+  return "$rc"
+}
+
+cmd_rapida() {  # vídeo gravado, mas com o modelo da live (bem mais rápido)
+  checar_instalacao
+  local link="${1:-}"; [ -n "$link" ] || link="$(ler_link)"
+  local modelo; modelo="$(garantir_modelo "$MODELO_AOVIVO")" || return 1
+  titulo "VÍDEO GRAVADO - versão rápida (modelo $MODELO_AOVIVO)"
+  segurar_tela
+  motor gravada "$link" --modelo "$modelo" --nome-modelo "$MODELO_AOVIVO" \
+        --sufixo "RÁPIDA" --tipo "VÍDEO GRAVADO (versão rápida)" "${@:2}"
+}
+
+cmd_arquivo() {
+  checar_instalacao
+  local arq="${1:-}"
+  if [ -z "$arq" ]; then
+    echo "Dica: no app de arquivos, toque em Compartilhar > Termux para mandar o áudio direto."
+    read -r -p "Caminho do arquivo (ex.: ~/storage/downloads/sessao.mp3): " arq
+    arq="${arq/#\~/$HOME}"
+  fi
+  [ -f "$arq" ] || { falha "Arquivo não encontrado: $arq"; return 1; }
+  local modelo; modelo="$(garantir_modelo "$MODELO_FIEL")" || return 1
+  titulo "ARQUIVO - modelo $MODELO_FIEL"
+  segurar_tela
+  motor arquivo "$arq" --modelo "$modelo" --nome-modelo "$MODELO_FIEL" "${@:2}"
+}
+
+cmd_arquivo_compartilhado() {  # chamado pelo "Compartilhar > Termux" de um arquivo
+  local arq="$1"
+  titulo "Arquivo recebido"
+  echo "$arq"
+  echo
+  echo "  1) FIEL    - transcrição integral no celular (modelo $MODELO_FIEL)"
+  echo "  2) NUVEM   - transcrição integral no GitHub (rápida, grátis)"
+  echo "  3) RÁPIDA  - transcrição no celular com o modelo $MODELO_AOVIVO"
+  echo "  0) Cancelar"
+  read -r -p "Escolha [1]: " op
+  case "${op:-1}" in
+    1) cmd_arquivo "$arq" ;;
+    2) cmd_nuvem "$arq" ;;
+    3) local modelo; modelo="$(garantir_modelo "$MODELO_AOVIVO")" || return 1
+       segurar_tela
+       motor arquivo "$arq" --modelo "$modelo" --nome-modelo "$MODELO_AOVIVO" --sufixo "RÁPIDA" ;;
+    *) echo "Cancelado." ;;
+  esac
+}
+
+cmd_fiel() {
+  checar_instalacao
+  local modelo; modelo="$(garantir_modelo "$MODELO_FIEL")" || return 1
+  titulo "VERSÃO FIEL da live gravada (modelo $MODELO_FIEL)"
+  segurar_tela
+  motor fiel ${1:+"$1"} --modelo "$modelo" --nome-modelo "$MODELO_FIEL" "${@:2}"
+}
+
+cmd_legenda() {
+  checar_instalacao
+  local link="${1:-}"; [ -n "$link" ] || link="$(ler_link)"
+  titulo "LEGENDA DO YOUTUBE"
+  motor legenda "$link" "${@:2}"
+}
+
+cmd_nuvem() {
+  checar_instalacao
+  if [ ! -s "$TCE_TOKEN" ]; then
+    falha "Primeiro configure o acesso ao GitHub (uma vez só): tce nuvem-configurar"
+    return 1
+  fi
+  local alvo="${1:-}"
+  if [ "$alvo" = "fiel" ] || [ "$alvo" = "live" ]; then
+    alvo="$(ls -dt "$TCE_DADOS"/sessoes/*-aovivo 2>/dev/null | head -1)"
+    [ -n "$alvo" ] || { falha "Nenhuma live gravada encontrada."; return 1; }
+  fi
+  [ -n "$alvo" ] || alvo="$(ler_link)"
+  titulo "NUVEM - transcrição integral no GitHub Actions (modelo $MODELO_NUVEM)"
+  segurar_tela
+  motor nuvem "$alvo" "${@:2}"
+}
+
+cmd_nuvem_configurar() {
+  titulo "Configurar a transcrição na nuvem (GitHub Actions, grátis)"
+  cat <<EOF
+A nuvem usa o seu repositório $REPO no GitHub.
+Crie uma chave de acesso (token) pelo navegador do celular:
+
+ 1. Abra: https://github.com/settings/personal-access-tokens/new
+ 2. Token name: TCE Transcritor     Expiration: 1 year (ou o máximo)
+ 3. Repository access: "Only select repositories" > $REPO
+ 4. Permissions > Repository permissions:
+      Actions:  Read and write
+      Contents: Read and write
+ 5. Generate token > copie o código (começa com github_pat_)
+
+EOF
+  local token=""
+  read -r -s -p "Cole o token aqui (não aparece na tela) e tecle Enter: " token
+  echo
+  token="$(echo "$token" | tr -d '[:space:]')"
+  [ -n "$token" ] || { falha "Nenhum token colado."; return 1; }
+  mkdir -p "$(dirname "$TCE_TOKEN")"
+  ( umask 077; printf '%s\n' "$token" > "$TCE_TOKEN" )
+  echo "Testando..."
+  if motor nuvem-testar; then
+    negrito "Pronto! Agora use: tce nuvem LINK   (ou a opção NUVEM do menu)"
+  else
+    falha "O teste falhou. Confira as permissões do token e rode de novo: tce nuvem-configurar"
+    return 1
+  fi
+}
+
+cmd_velocidade() {
+  checar_instalacao
+  local amostra="$TCE_DADOS/whisper.cpp/samples/jfk.wav"
+  [ -f "$amostra" ] || { falha "Amostra não encontrada ($amostra). Rode: tce reparar"; return 1; }
+  local args=() nome arq
+  for nome in tiny base small medium turbo turbo-q8 large; do
+    arq="$MODELOS_DIR/$(arquivo_modelo "$nome")"
+    [ -s "$arq" ] && args+=("$nome=$arq")
+  done
+  [ ${#args[@]} -gt 0 ] || { falha "Nenhum modelo baixado. Rode: tce modelos baixar small"; return 1; }
+  titulo "Velocidade neste aparelho"
+  motor velocidade --amostra "$amostra" "${args[@]}" | grep -v '^RESULTADO'
+  echo
+  echo "Ao vivo usa: $MODELO_AOVIVO    Versão fiel usa: $MODELO_FIEL"
+  echo "Para trocar, edite $TCE_CONFIG (ex.: MODELO_AOVIVO=\"base\")."
+}
+
+cmd_modelos() {
+  if [ "${1:-}" = "baixar" ] && [ -n "${2:-}" ]; then
+    garantir_modelo "$2" >/dev/null && negrito "Modelo $2 pronto."
+    return
+  fi
+  titulo "Modelos"
+  local nome arq tam
+  for nome in tiny base small medium turbo turbo-q8 large; do
+    arq="$MODELOS_DIR/$(arquivo_modelo "$nome")"
+    if [ -s "$arq" ]; then tam="$(du -h "$arq" | cut -f1)"; echo "  [baixado] $nome ($tam)"
+    else echo "  [  --   ] $nome"; fi
+  done
+  cat <<EOF
+
+  tiny/base: rápidos, qualidade baixa (celulares fracos ao vivo)
+  small:     bom para AO VIVO na maioria dos celulares
+  turbo:     melhor custo/benefício para a versão FIEL (recomendado)
+  large:     o mais preciso, muito lento no celular
+Baixar: tce modelos baixar NOME
+EOF
+}
+
+cmd_atualizar() {
+  titulo "Atualizando"
+  if [ -d "$TCE_APP/.git" ]; then
+    git -C "$TCE_APP" pull --ff-only || falha "Não consegui atualizar os scripts (git pull)."
+  fi
+  "$PY" -m pip install -U --quiet "yt-dlp[default]" || falha "Não consegui atualizar o yt-dlp."
+  echo "yt-dlp $(yt-dlp --version 2>/dev/null)"
+  negrito "Atualizado. (Se o YouTube mudar algo, rodar 'tce atualizar' costuma resolver.)"
+}
+
+cmd_reparar() {
+  titulo "Recompilando o whisper.cpp (modo compatível)"
+  TCE_COMPATIVEL=1 TCE_SO_WHISPER=1 bash "$TCE_APP/instalar.sh"
+}
+
+cmd_link() {  # chamado pelo "Compartilhar > Termux"
+  local link="$1"
+  checar_instalacao
+  titulo "Link recebido"
+  echo "$link"
+  echo "Consultando o YouTube..."
+  local info
+  if ! info="$(motor info "$link" 2>&1)"; then
+    falha "$info"
+    echo "Mesmo assim você pode tentar: 1) ao vivo  2) gravada"
+  fi
+  local TITULO="" STATUS="" DURACAO=""
+  eval "$(printf '%s\n' "$info" | grep -E '^(TITULO|STATUS|DURACAO)=')"
+  local dur=""
+  if [[ "$DURACAO" =~ ^[0-9.]+$ ]]; then
+    local s=${DURACAO%.*}; dur=" - $((s / 3600))h$(printf '%02d' $((s % 3600 / 60)))"
+  fi
+  echo
+  negrito "${TITULO:-vídeo}"
+  local rec
+  case "$STATUS" in
+    is_live)     echo "(AO VIVO agora)"; rec=1 ;;
+    is_upcoming) echo "(ainda vai começar: o TCE espera e começa sozinho)"; rec=1 ;;
+    *)           echo "(gravado$dur)"; rec=2 ;;
+  esac
+  echo
+  echo "  1) AO VIVO   - texto na hora, enquanto a live acontece"
+  echo "  2) FIEL      - transcrição integral no celular (modelo $MODELO_FIEL)"
+  echo "  3) NUVEM     - transcrição integral no GitHub (rápida, grátis)"
+  echo "  4) RÁPIDA    - transcrição integral no celular com o modelo $MODELO_AOVIVO"
+  echo "  5) LEGENDA   - legenda do próprio YouTube (segundos, sem pontuação)"
+  echo "  0) Cancelar"
+  read -r -p "Escolha [$rec]: " op
+  case "${op:-$rec}" in
+    1) cmd_aovivo "$link" ;;
+    2) cmd_gravada "$link" ;;
+    3) cmd_nuvem "$link" ;;
+    4) cmd_rapida "$link" ;;
+    5) cmd_legenda "$link" ;;
+    *) echo "Cancelado." ;;
+  esac
+}
+
+cmd_ajuda() {
+  cat <<EOF
+TCE Transcritor - transcrição de lives e vídeos (offline, grátis)
+
+  tce                     menu
+  tce aovivo LINK         live em tempo real (texto aparece na hora)
+  tce gravada LINK        vídeo gravado: transcrição integral fiel (modelo $MODELO_FIEL)
+  tce rapida LINK         vídeo gravado com o modelo rápido ($MODELO_AOVIVO)
+  tce legenda LINK        legenda do próprio YouTube em TXT (segundos)
+  tce arquivo CAMINHO     áudio/vídeo que já está no celular
+  tce fiel [SESSAO]       refaz a última live gravada com o modelo grande
+  tce nuvem LINK|ARQUIVO  transcrição integral no GitHub Actions (rápida)
+  tce nuvem fiel          manda a última live gravada para a nuvem
+  tce nuvem-configurar    liga a nuvem (uma vez só)
+  tce velocidade          mede a velocidade dos modelos neste celular
+  tce modelos [baixar N]  lista/baixa modelos (base, small, turbo, large)
+  tce atualizar           atualiza scripts e yt-dlp
+  tce reparar             recompila o whisper.cpp (se der erro estranho)
+  tce pasta               mostra onde ficam os TXT
+
+Os TXT ficam em: $PASTA_SAIDA
+Configuração:    $TCE_CONFIG
+Dica: no YouTube, toque em Compartilhar > Termux e escolha o que fazer.
+Ctrl+C para parar (dá para continuar depois rodando o mesmo comando).
+EOF
+}
+
+cmd_menu() {
+  while true; do
+    echo
+    negrito "=============================================="
+    negrito "  TCE Transcritor"
+    negrito "=============================================="
+    echo "  1) AO VIVO   - transcrever uma live agora"
+    echo "  2) GRAVADA   - transcrição integral de um vídeo (fiel)"
+    echo "  3) NUVEM     - transcrição integral rápida no GitHub"
+    echo "  4) LEGENDA   - legenda do YouTube em TXT (segundos)"
+    echo "  5) ARQUIVO   - áudio/vídeo que está no celular"
+    echo "  6) FIEL      - refazer a última live gravada"
+    echo "  7) Testar a velocidade deste celular"
+    echo "  8) Atualizar"
+    echo "  9) Ajuda"
+    echo "  0) Sair"
+    read -r -p "Escolha: " op || exit 0
+    case "$op" in
+      1) cmd_aovivo ;;
+      2) cmd_gravada ;;
+      3) cmd_nuvem ;;
+      4) cmd_legenda ;;
+      5) cmd_arquivo ;;
+      6) cmd_fiel ;;
+      7) cmd_velocidade ;;
+      8) cmd_atualizar ;;
+      9) cmd_ajuda ;;
+      0|q|sair) exit 0 ;;
+      *) echo "Opção inválida." ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------------------------
+cmd="${1:-menu}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  menu)                       cmd_menu ;;
+  aovivo|ao-vivo|live)        cmd_aovivo "$@" ;;
+  gravada|gravado|video)      cmd_gravada "$@" ;;
+  rapida|rápida)              cmd_rapida "$@" ;;
+  legenda|legendas)           cmd_legenda "$@" ;;
+  arquivo|audio)              cmd_arquivo "$@" ;;
+  fiel)                       cmd_fiel "$@" ;;
+  nuvem)                      cmd_nuvem "$@" ;;
+  nuvem-configurar)           cmd_nuvem_configurar ;;
+  velocidade|teste)           cmd_velocidade ;;
+  modelos|modelo)             cmd_modelos "$@" ;;
+  atualizar|update)           cmd_atualizar ;;
+  reparar)                    cmd_reparar ;;
+  link)                       cmd_link "$@" ;;
+  compartilhado)              cmd_arquivo_compartilhado "$@" ;;
+  pasta)                      echo "$PASTA_SAIDA" ;;
+  ajuda|help|-h|--help)       cmd_ajuda ;;
+  *)
+    if eh_link "$cmd"; then cmd_link "$cmd"
+    elif [ -f "$cmd" ]; then cmd_arquivo "$cmd" "$@"
+    else falha "Comando desconhecido: $cmd"; cmd_ajuda; exit 1; fi ;;
+esac

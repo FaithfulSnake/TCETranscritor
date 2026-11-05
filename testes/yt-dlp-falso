@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""yt-dlp de mentira para testar o modo AO VIVO sem YouTube.
+
+Variáveis de ambiente:
+  FALSO_AUDIO     arquivo de áudio que faz o papel da live
+  FALSO_TRECHOS   durações (s) de cada conexão, ex. "40,40": a 1ª cai aos 40 s
+                  e a 2ª continua do ponto onde parou (simula queda de rede)
+  FALSO_ESTADO    arquivo para guardar quantas conexões já foram feitas
+"""
+import json
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+estado = os.environ.get("FALSO_ESTADO", "/tmp/yt-dlp-falso.estado")
+trechos = [float(x) for x in os.environ.get("FALSO_TRECHOS", "60").split(",")]
+try:
+    conexoes = int(open(estado).read().strip() or 0)
+except (OSError, ValueError):
+    conexoes = 0
+url = args[-1] if args else ""
+
+if "-J" in args:
+    print(json.dumps({"id": "falso123", "title": "Sessão de teste ao vivo - 05/11/2026",
+                      "channel": "Canal de Teste", "live_status": "is_live",
+                      "webpage_url": url, "upload_date": "20261105"}))
+    sys.exit(0)
+
+if "--print" in args:
+    print("is_live" if conexoes < len(trechos) else "was_live")
+    sys.exit(0)
+
+if "-o" in args and args[args.index("-o") + 1] == "-":
+    if conexoes >= len(trechos):
+        sys.exit(1)
+    inicio = sum(trechos[:conexoes])
+    with open(estado, "w") as f:
+        f.write(str(conexoes + 1))
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-re",
+           "-ss", str(inicio), "-t", str(trechos[conexoes]), "-i", os.environ["FALSO_AUDIO"],
+           "-vn", "-c:a", "aac", "-b:a", "64k", "-f", "mpegts", "pipe:1"]
+    sys.exit(subprocess.call(cmd))
+
+print("yt-dlp-falso: argumentos não previstos: " + " ".join(args), file=sys.stderr)
+sys.exit(2)

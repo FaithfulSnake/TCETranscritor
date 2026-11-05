@@ -1,0 +1,248 @@
+name: Transcrever na nuvem
+run-name: "Transcrição: ${{ inputs.titulo }} [${{ inputs.id }}]"
+
+# Transcrição integral de um áudio, dividida em várias máquinas em paralelo.
+# Normalmente é disparado pelo comando `tce nuvem` do celular, que baixa o áudio
+# do YouTube no próprio celular (o YouTube bloqueia downloads a partir da nuvem),
+# envia para o GitHub e depois traz o TXT de volta para a pasta Download.
+# Também dá para rodar pela aba Actions com um link direto de arquivo de áudio.
+
+on:
+  workflow_dispatch:
+    inputs:
+      audio:
+        description: "Link direto do arquivo de áudio (mp3, m4a, ogg, wav...)"
+        required: true
+      titulo:
+        description: "Título (vai no cabeçalho e no nome do TXT)"
+        required: true
+        default: "Sessão"
+      arquivo:
+        description: "Nome do TXT (opcional)"
+        required: false
+        default: ""
+      modelo:
+        description: "Modelo"
+        type: choice
+        options: [turbo, large, medium, small]
+        default: turbo
+      partes:
+        description: "Máquinas em paralelo (1 a 16)"
+        required: false
+        default: "8"
+      link:
+        description: "Link do vídeo original (opcional, vai no cabeçalho)"
+        required: false
+        default: ""
+      canal:
+        description: "Canal (opcional)"
+        required: false
+        default: ""
+      data:
+        description: "Data (opcional)"
+        required: false
+        default: ""
+      id:
+        description: "Identificador (preenchido pelo tce)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  WHISPER_VERSAO: v1.9.5
+  VAD_ARQ: ggml-silero-v6.2.0.bin
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      partes: ${{ steps.dividir.outputs.partes }}
+      duracao: ${{ steps.dividir.outputs.duracao }}
+      arquivo: ${{ steps.dividir.outputs.arquivo }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+
+      - name: Baixar o áudio
+        env:
+          AUDIO: ${{ inputs.audio }}
+        run: |
+          case "$AUDIO" in
+            *youtube.com*|*youtu.be*)
+              echo "::error::O YouTube bloqueia downloads feitos pelos servidores do GitHub. Use 'tce nuvem LINK' no celular: ele baixa o áudio no aparelho e manda para cá."
+              exit 1 ;;
+          esac
+          curl -fL --retry 5 --retry-delay 5 -o entrada.audio "$AUDIO"
+          ls -la entrada.audio
+
+      - name: Dividir em partes (cortes no silêncio)
+        id: dividir
+        env:
+          PARTES: ${{ inputs.partes }}
+          TITULO: ${{ inputs.titulo }}
+          ARQUIVO: ${{ inputs.arquivo }}
+        run: |
+          n="${PARTES//[^0-9]/}"; n="${n:-8}"; [ "$n" -gt 16 ] && n=16; [ "$n" -lt 1 ] && n=1
+          python3 tce/motor.py dividir entrada.audio --partes "$n" > partes.json
+          cat partes.json
+          dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 entrada.audio)
+          nome=$(python3 -c 'import os,sys; sys.path.insert(0,"tce"); import motor; a=os.environ.get("ARQUIVO") or ""; print(a if a.endswith(".txt") else motor.nome_arquivo(os.environ["TITULO"]) + " - FIEL (nuvem).txt")')
+          {
+            echo "partes=$(cat partes.json)"
+            echo "duracao=$dur"
+            echo "arquivo=$nome"
+          } >> "$GITHUB_OUTPUT"
+          echo "Duração: $dur s; partes: $(python3 -c 'import json; print(len(json.load(open("partes.json"))))')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio
+          path: entrada.audio
+          retention-days: 1
+
+  transcrever:
+    needs: preparar
+    name: transcrever (parte ${{ matrix.p.parte }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        p: ${{ fromJSON(needs.preparar.outputs.partes) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+
+      - name: Cache do whisper.cpp
+        id: cache-whisper
+        uses: actions/cache@v4
+        with:
+          path: ~/whisper-bin
+          key: whisper-${{ env.WHISPER_VERSAO }}-${{ runner.os }}-${{ runner.arch }}-avx2-v1
+
+      - name: Compilar whisper.cpp
+        if: steps.cache-whisper.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --quiet --branch "$WHISPER_VERSAO" https://github.com/ggml-org/whisper.cpp /tmp/whisper.cpp
+          cmake -S /tmp/whisper.cpp -B /tmp/wb -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON \
+            -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON >/dev/null
+          cmake --build /tmp/wb -j "$(nproc)" --target whisper-cli >/dev/null
+          mkdir -p ~/whisper-bin && cp /tmp/wb/bin/whisper-cli ~/whisper-bin/
+
+      - name: Escolher o modelo
+        env:
+          MODELO: ${{ inputs.modelo }}
+        run: |
+          case "$MODELO" in
+            small)  arq=ggml-small-q8_0.bin ;;
+            medium) arq=ggml-medium-q5_0.bin ;;
+            large)  arq=ggml-large-v3-q5_0.bin ;;
+            *)      arq=ggml-large-v3-turbo-q5_0.bin ;;
+          esac
+          echo "MODELO_ARQ=$arq" >> "$GITHUB_ENV"
+
+      - name: Cache do modelo
+        uses: actions/cache@v4
+        with:
+          path: ~/modelos
+          key: modelo-${{ env.MODELO_ARQ }}-v1
+
+      - name: Baixar modelo
+        run: |
+          mkdir -p ~/modelos
+          [ -s ~/modelos/"$MODELO_ARQ" ] || curl -fL --retry 5 -s -o ~/modelos/"$MODELO_ARQ" \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODELO_ARQ"
+          [ -s ~/modelos/"$VAD_ARQ" ] || curl -fL --retry 5 -s -o ~/modelos/"$VAD_ARQ" \
+            "https://huggingface.co/ggml-org/whisper-vad/resolve/main/$VAD_ARQ"
+          ls -la ~/modelos
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: audio
+
+      - name: Transcrever esta parte
+        env:
+          INICIO: ${{ matrix.p.inicio }}
+          FIM: ${{ matrix.p.fim }}
+          PARTE: ${{ matrix.p.parte }}
+          MODELO: ${{ inputs.modelo }}
+        run: |
+          nome=$(printf 'parte-%03d.txt' "$PARTE")
+          extra=()
+          [ -n "$FIM" ] && extra=(--fim "$FIM")
+          python3 tce/motor.py arquivo entrada.audio --inicio "$INICIO" "${extra[@]}" \
+            --fragmento "$nome" --modelo ~/modelos/"$MODELO_ARQ" --nome-modelo "$MODELO" \
+            --vad-modelo ~/modelos/"$VAD_ARQ" --whisper ~/whisper-bin/whisper-cli \
+            --threads "$(nproc)" --dados /tmp/tce
+          echo "--- início do trecho:"; head -c 1500 "$nome"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parte-${{ matrix.p.parte }}
+          path: parte-*.txt
+          retention-days: 3
+
+  juntar:
+    needs: [preparar, transcrever]
+    if: always() && needs.preparar.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parte-*
+          merge-multiple: true
+          path: partes
+
+      - name: Montar o TXT final
+        env:
+          PARTES: ${{ needs.preparar.outputs.partes }}
+          DURACAO: ${{ needs.preparar.outputs.duracao }}
+          ARQUIVO: ${{ needs.preparar.outputs.arquivo }}
+          TITULO: ${{ inputs.titulo }}
+          LINK: ${{ inputs.link }}
+          CANAL: ${{ inputs.canal }}
+          DATA: ${{ inputs.data }}
+          MODELO: ${{ inputs.modelo }}
+        run: |
+          mkdir -p transcricoes
+          python3 tce/motor.py juntar --pasta partes --partes-json "$PARTES" \
+            --saida "transcricoes/$ARQUIVO" --titulo "$TITULO" --link "$LINK" --canal "$CANAL" \
+            --data "$DATA" --nome-modelo "$MODELO" --duracao "$DURACAO"
+          wc -c "transcricoes/$ARQUIVO"
+
+      - name: Guardar o TXT no repositório (pasta transcricoes)
+        env:
+          ARQUIVO: ${{ needs.preparar.outputs.arquivo }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "transcricoes/$ARQUIVO"
+          git commit -q -m "Transcrição: $ARQUIVO"
+          for tentativa in 1 2 3 4 5; do
+            git push -q && break
+            sleep $((tentativa * 3))
+            git pull -q --rebase
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transcricao
+          path: transcricoes/${{ needs.preparar.outputs.arquivo }}
+
+      - name: Apagar o áudio temporário
+        if: always() && contains(inputs.audio, '/releases/download/audios/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIO: ${{ inputs.audio }}
+        run: gh release delete-asset audios "$(basename "$AUDIO")" -y --repo "$GITHUB_REPOSITORY" || true

@@ -1,0 +1,104 @@
+name: Testes
+
+# Roda a cada mudança no código:
+#  * motor-linux:    testes de ponta a ponta com o whisper.cpp de verdade e fala em português
+#  * termux-aarch64: o instalador dentro de um Termux de verdade (arquitetura de celular, aarch64)
+on:
+  push:
+    paths-ignore: ["**.md", "transcricoes/**"]
+  pull_request:
+    paths-ignore: ["**.md", "transcricoes/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testes-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WHISPER_VERSAO: v1.9.5
+  # "Primeira Catilinária" (Antologia de Discursos em Português, LibriVox, domínio público)
+  AMOSTRA_URL: https://archive.org/download/antologia_de_discursos_em_portugues_1402_librivox/antologia_de_discursos_em_portugues_07_various_64kb.mp3
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -S warning instalar.sh tce/tce testes/rodar.sh testes/termux-ci.sh
+      - name: Python compila
+        run: python3 -m py_compile tce/motor.py testes/yt-dlp-falso
+
+  motor-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - name: Cache do whisper.cpp
+        id: cache-whisper
+        uses: actions/cache@v4
+        with:
+          path: ~/whisper-bin
+          key: whisper-${{ env.WHISPER_VERSAO }}-${{ runner.os }}-${{ runner.arch }}-avx2-v1
+      - name: Compilar whisper.cpp
+        if: steps.cache-whisper.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --quiet --branch "$WHISPER_VERSAO" https://github.com/ggml-org/whisper.cpp /tmp/whisper.cpp
+          cmake -S /tmp/whisper.cpp -B /tmp/wb -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON \
+            -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON >/dev/null
+          cmake --build /tmp/wb -j "$(nproc)" --target whisper-cli >/dev/null
+          mkdir -p ~/whisper-bin && cp /tmp/wb/bin/whisper-cli ~/whisper-bin/
+      - name: Cache dos modelos
+        uses: actions/cache@v4
+        with:
+          path: ~/modelos
+          key: modelos-small-vad-v1
+      - name: Baixar modelo e amostra
+        run: |
+          mkdir -p ~/modelos
+          [ -s ~/modelos/ggml-small-q8_0.bin ] || curl -fsSL -o ~/modelos/ggml-small-q8_0.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q8_0.bin
+          [ -s ~/modelos/ggml-silero-v6.2.0.bin ] || curl -fsSL -o ~/modelos/ggml-silero-v6.2.0.bin \
+            https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin
+          curl -fsSL --retry 5 -o /tmp/completo.mp3 "$AMOSTRA_URL"
+          ffmpeg -nostdin -loglevel error -y -i /tmp/completo.mp3 -t 300 -c copy /tmp/amostra.mp3
+      - name: Testes de ponta a ponta
+        env:
+          WHISPER: /home/runner/whisper-bin/whisper-cli
+          MODELO: /home/runner/modelos/ggml-small-q8_0.bin
+          VAD: /home/runner/modelos/ggml-silero-v6.2.0.bin
+          AMOSTRA: /tmp/amostra.mp3
+          SAIDA_TESTES: /tmp/resultados
+          THREADS: "4"
+        run: bash testes/rodar.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resultados-linux
+          path: /tmp/resultados/saida
+
+  termux-aarch64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar e testar dentro do Termux (aarch64)
+        run: |
+          mkdir -p saida && chmod 777 saida
+          tar -C "$GITHUB_WORKSPACE" --exclude=./saida -cf - . | docker run -i --rm --privileged \
+            -v "$PWD/saida:/saida" termux/termux-docker:aarch64 \
+            bash -c 'mkdir -p ~/src && tar -C ~/src -xf - && bash ~/src/testes/termux-ci.sh "$0"' "$AMOSTRA_URL"
+      - name: Resultado
+        if: always()
+        run: for f in saida/*.txt; do echo "--- $f"; cat "$f"; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resultados-termux
+          path: saida
