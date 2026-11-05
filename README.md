@@ -29,7 +29,8 @@ tela, usar o WhatsApp e ouvir outras coisas sem atrapalhar a transcrição.
 
 3. Quando o Android pedir acesso aos arquivos, toque em **Permitir**.
 4. Espere aparecer **Tudo pronto!** O instalador baixa o yt-dlp, compila o whisper.cpp
-   no próprio celular, baixa os modelos (~850 MB) e mede a velocidade do aparelho.
+   no próprio celular, baixa os modelos (~850 MB), mede a velocidade do aparelho e
+   testa o acesso ao YouTube. Precisa de uns **3 GB livres**.
 
 Opcionais (também do F-Droid): **Termux:API** (notificação com o progresso; depois
 ponha `NOTIFICAR=1` na configuração) e **Termux:Widget** (atalho na tela inicial).
@@ -92,8 +93,11 @@ novo**: ele continua de onde parou, sem repetir texto.
 
 Depende do celular; rode `tce velocidade` para ver os números do seu. Referência:
 
-- **AO VIVO** (modelo `small`): acompanha a live na maioria dos celulares de 2020 em
-  diante. Se o celular não der conta, o instalador troca sozinho para o `base`.
+- **LEGENDA**: segundos. As sessões do canal do TCE-MA têm legenda automática em
+  português (com pontuação razoável); é o jeito mais rápido de ter o texto inteiro.
+- **AO VIVO** (modelo `small`): no teste automático dentro do Termux (processador ARM
+  de 4 núcleos) rodou a 3x o tempo real, ou seja, sobra folga para acompanhar a live.
+  Se o seu celular não der conta, o instalador troca sozinho para o `base`.
 - **FIEL no celular** (modelo `turbo`): em celular intermediário, algo entre 1x e 3x a
   duração da sessão (4 h de sessão podem levar a noite). Deixe na tomada.
 - **NUVEM**: a sessão é dividida em até 8 partes transcritas ao mesmo tempo; 4 h de
@@ -137,8 +141,9 @@ colando um link direto de arquivo de áudio.
 |---|---|
 | `Sign in to confirm you're not a bot` | `tce atualizar`; tente de novo depois de alguns minutos ou troque Wi-Fi/dados móveis |
 | `Illegal instruction` ou erro estranho do whisper | `tce reparar` |
-| `[Process completed (signal 9)]` ou o Termux fechou sozinho | bateria sem restrições para o Termux; no Android 14+, Opções do desenvolvedor > *Desativar restrições de processos filhos* |
+| `[Process completed (signal 9)]` ou o Termux fechou sozinho | bateria **sem restrições** para o Termux e não feche a sessão do Termux; no Android 14+, Opções do desenvolvedor > *Desativar restrições de processos filhos*. Depois, rode o mesmo comando: ele continua de onde parou |
 | Não acho o TXT | `tce pasta` mostra onde está (normalmente Download/TCE-Transcricoes) |
+| Qualquer outra coisa | `tce diagnostico` confere yt-dlp, YouTube, whisper e modelos (e se ajusta sozinho quando dá) |
 | Celular fraco demais para o AO VIVO | na configuração (`~/.config/tce/config`) ponha `MODELO_AOVIVO="base"` |
 
 ## Como funciona

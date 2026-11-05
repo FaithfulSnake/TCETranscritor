@@ -640,6 +640,21 @@ class Captura(threading.Thread):
             self.procs = [y, f]
         return f
 
+    def _mostrar_erro_log(self) -> None:
+        """Mostra (no máximo 1 vez por minuto) o último erro do yt-dlp enquanto tenta conectar."""
+        try:
+            with open(self.log, "rb") as f:
+                f.seek(max(0, os.path.getsize(self.log) - 4000))
+                linhas = [l.strip() for l in f.read().decode("utf-8", "replace").splitlines() if l.strip()]
+        except OSError:
+            return
+        if not linhas:
+            return
+        agora = time.time()
+        if linhas[-1] != getattr(self, "_ultimo_erro", None) or agora - getattr(self, "_quando_erro", 0) > 60:
+            self._ultimo_erro, self._quando_erro = linhas[-1], agora
+            avisar(f"   (tentando conectar à live: {explicar_erro_ytdlp(linhas[-1])})")
+
     def _vigia(self) -> None:
         """Se a live travar (sem áudio por 2 min), derruba a conexão para reconectar."""
         while self.ativa and not self.parar.is_set():
@@ -680,6 +695,8 @@ class Captura(threading.Thread):
                             pass
                     if self.parar.is_set():
                         break
+                    if not recebeu:
+                        self._mostrar_erro_log()
                     estado = status_live(self.ytdlp, self.url)
                     if estado in ("is_live", "is_upcoming", None):
                         if recebeu:
@@ -769,11 +786,23 @@ def transcrever(fonte, whisper: Whisper, escritor: Escritor, estado: Estado, *,
         fim_bloco = pos + dur_bloco
 
         segs = []
+        falhou = None
         if dur_bloco >= 0.3:
             gravar_wav(wav, pcm)
-            brutos = whisper.transcrever(wav, montar_prompt(prompt_base, contexto), dur_bloco)
+            try:
+                brutos = whisper.transcrever(wav, montar_prompt(prompt_base, contexto), dur_bloco)
+            except RuntimeError as e:
+                # ao vivo, um bloco com erro não pode parar a captura: marca e segue
+                if not ao_vivo or "Illegal instruction" in str(e):
+                    raise
+                falhou = str(e)
+                brutos = []
             segs = limpeza.filtrar([(pos + a, pos + b, tx) for a, b, tx in brutos])
         pars = agrupar_paragrafos(segs)
+        if falhou:
+            avisar(f"   (erro ao transcrever este trecho: {falhou[-200:]})")
+            pars.append((pos, "[trecho não transcrito ao vivo por erro; o áudio foi gravado "
+                              "e entra na versão fiel]"))
 
         # marcadores de queda de conexão (ao vivo)
         if eventos and os.path.exists(eventos):
@@ -1148,6 +1177,38 @@ def cmd_fiel(a) -> int:
 
 # ---- legenda automática do YouTube -----------------------------------------
 
+def paragrafos_legenda(palavras):
+    """Agrupa pedaços de legenda [(início, texto, fim)] em parágrafos.
+
+    A legenda automática do YouTube marca troca de quem fala com '>>':
+    cada '>>' abre um parágrafo novo, iniciado por travessão. Fora isso,
+    quebra em pausas de mais de 2,5 s ou em textos longos (no fim da frase).
+    """
+    pars, atual, t_atual, fim_ant = [], "", None, None
+
+    def fechar():
+        texto = re.sub(r"\s+", " ", atual).strip()
+        if texto and texto != "—":
+            pars.append((t_atual, texto))
+
+    for t, u, fim in palavras:
+        for k, pedaco in enumerate(u.split(">>")):
+            troca = k > 0
+            if atual and (troca or t - fim_ant > 2.5 or len(atual) > 900
+                          or (len(atual) > 450 and atual.rstrip().endswith((".", "?", "!")))):
+                fechar()
+                atual, t_atual = "", None
+            if t_atual is None:
+                t_atual = t
+                if troca:
+                    atual = "— "
+            atual += pedaco if not troca else " " + pedaco.lstrip()
+        fim_ant = max(fim, fim_ant or 0.0)
+    if atual.strip():
+        fechar()
+    return pars
+
+
 def json3_paragrafos(caminho: str):
     with open(caminho, encoding="utf-8") as f:
         j = json.load(f)
@@ -1165,20 +1226,9 @@ def json3_paragrafos(caminho: str):
             if primeiro and not u.startswith(" "):
                 u = " " + u
             primeiro = False
-            palavras.append((t0 + s.get("tOffsetMs", 0) / 1000.0, u))
-    pars, atual, t_atual, ultimo = [], "", None, None
-    for t, u in palavras:
-        if atual and (t - ultimo > 2.5 or len(atual) > 700
-                      or (len(atual) > 400 and atual.rstrip().endswith((".", "?", "!")))):
-            pars.append((t_atual, re.sub(r"\s+", " ", atual).strip()))
-            atual, t_atual = "", None
-        if t_atual is None:
-            t_atual = t
-        atual += u
-        ultimo = t
-    if atual.strip():
-        pars.append((t_atual, re.sub(r"\s+", " ", atual).strip()))
-    return pars
+            t = t0 + s.get("tOffsetMs", 0) / 1000.0
+            palavras.append((t, u, t))
+    return paragrafos_legenda(palavras)
 
 
 def escolher_legenda(arquivos: list[str]) -> str | None:

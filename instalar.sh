@@ -297,6 +297,9 @@ instalar_comandos
 baixar_modelos
 testar
 escolher_modelo_aovivo
+if [ -z "${TCE_TESTE:-}" ]; then
+  "$BIN_GLOBAL/tce" diagnostico || aviso "o YouTube não respondeu agora; rode 'tce diagnostico' mais tarde"
+fi
 
 echo
 cor "1;32" "Tudo pronto!"

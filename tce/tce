@@ -176,6 +176,7 @@ depois_da_live() {
     echo "  0) Agora não (depois: 'tce fiel' ou 'tce nuvem fiel')"
     local padrao=1; [ -s "$TCE_TOKEN" ] && padrao=2
     echo "(sem resposta em 2 minutos, escolho $padrao)"
+    escolha=""
     read -r -t 120 -p "Escolha [$padrao]: " escolha || true
     escolha="${escolha:-$padrao}"
   fi
@@ -361,6 +362,39 @@ cmd_atualizar() {
   negrito "Atualizado. (Se o YouTube mudar algo, rodar 'tce atualizar' costuma resolver.)"
 }
 
+cmd_diagnostico() {  # confere se o YouTube está respondendo neste celular
+  titulo "Diagnóstico"
+  local ytdlp="${TCE_YTDLP:-yt-dlp}" teste="https://www.youtube.com/watch?v=jNQXAC9IVRw"
+  echo "yt-dlp:  $("$ytdlp" --version 2>/dev/null || echo 'NÃO INSTALADO')"
+  echo "deno:    $(deno --version 2>/dev/null | head -1 || echo '-')"
+  echo "node:    $(node --version 2>/dev/null || echo '-')"
+  echo "whisper: $([ -x "$WHISPER" ] && echo "$WHISPER" || echo 'NÃO ENCONTRADO (tce reparar)')"
+  echo "modelos: $(ls "$MODELOS_DIR" 2>/dev/null | tr '\n' ' ')"
+  echo "TXT em:  $PASTA_SAIDA"
+  echo
+  echo "Testando o acesso ao YouTube..."
+  local saida
+  if saida="$("$ytdlp" --no-warnings --simulate -f "ba/b" --print "%(title)s [%(format_id)s]" "$teste" 2>&1)"; then
+    negrito "YouTube OK: $saida"
+    return 0
+  fi
+  echo "$saida" | tail -3
+  if echo "$saida" | grep -qiE "challenge|javascript|js-runtime|deno|signature"; then
+    echo "Tentando com o node no lugar do deno..."
+    command -v node >/dev/null 2>&1 || pkg install -y nodejs >/dev/null 2>&1 || true
+    if command -v node >/dev/null 2>&1 && \
+       saida="$("$ytdlp" --no-warnings --js-runtimes node --simulate -f "ba/b" --print "%(title)s" "$teste" 2>&1)"; then
+      mkdir -p "$HOME/.config/yt-dlp"
+      grep -qs -- "--js-runtimes node" "$HOME/.config/yt-dlp/config" \
+        || echo "--js-runtimes node" >> "$HOME/.config/yt-dlp/config"
+      negrito "YouTube OK com o node (configurado): $saida"
+      return 0
+    fi
+  fi
+  falha "O YouTube não respondeu bem. Tente: tce atualizar; trocar de rede (Wi-Fi/dados) e rodar 'tce diagnostico' de novo."
+  return 1
+}
+
 cmd_reparar() {
   titulo "Recompilando o whisper.cpp (modo compatível)"
   TCE_COMPATIVEL=1 TCE_SO_WHISPER=1 bash "$TCE_APP/instalar.sh"
@@ -427,6 +461,7 @@ TCE Transcritor - transcrição de lives e vídeos (offline, grátis)
   tce modelos [baixar N]  lista/baixa modelos (base, small, turbo, large)
   tce atualizar           atualiza scripts e yt-dlp
   tce reparar             recompila o whisper.cpp (se der erro estranho)
+  tce diagnostico         confere yt-dlp, YouTube, whisper e modelos
   tce pasta               mostra onde ficam os TXT
 
 Os TXT ficam em: $PASTA_SAIDA
@@ -486,6 +521,7 @@ case "$cmd" in
   modelos|modelo)             cmd_modelos "$@" ;;
   atualizar|update)           cmd_atualizar ;;
   reparar)                    cmd_reparar ;;
+  diagnostico|diagnóstico)    cmd_diagnostico ;;
   link)                       cmd_link "$@" ;;
   compartilhado)              cmd_arquivo_compartilhado "$@" ;;
   pasta)                      echo "$PASTA_SAIDA" ;;
