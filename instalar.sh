@@ -211,7 +211,7 @@ NOTIFICAR=0
 # Nuvem (GitHub Actions)
 #REPO="FaithfulSnake/TCETranscritor"
 MODELO_NUVEM="turbo"
-PARTES_NUVEM=8
+PARTES_NUVEM=16
 
 # Palavras que ajudam o modelo a acertar nomes e termos (opcional)
 #PROMPT="Sessão do Tribunal de Contas do Estado do Maranhão. Conselheiro Fulano, conselheira Beltrana."
@@ -258,9 +258,9 @@ escolher_modelo_aovivo() {
   [ -s "$TCE_DADOS/modelos/ggml-small-q8_0.bin" ] || return 0
   passo "Medindo a velocidade deste aparelho (uns 30 segundos)"
   local res fator
-  res="$("$BIN_GLOBAL/tce" velocidade 2>&1 || true)"
-  echo "$res" | grep -E "tempo real" || true
-  fator="$(echo "$res" | sed -nE 's/^ *small +([0-9.]+)x.*/\1/p' | head -1)"
+  res="$(TCE_MOSTRAR_RESULTADO=1 "$BIN_GLOBAL/tce" velocidade 2>&1 || true)"
+  echo "$res" | grep -E "ao vivo .*fiel" || true
+  fator="$(echo "$res" | awk '$1 == "RESULTADO" && $2 == "small" {print $3; exit}')"
   if [ -n "$fator" ] && awk "BEGIN {exit !($fator < 1.6)}"; then
     aviso "o modelo small é lento demais para ao vivo neste aparelho; usando o base"
     "$BIN_GLOBAL/tce" modelos baixar base || true

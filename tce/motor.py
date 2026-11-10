@@ -324,6 +324,17 @@ def eh_alucinacao(texto: str) -> bool:
     return any(p.search(t) for p in _ALUCINACOES)
 
 
+def maiusculas_demais(texto: str) -> bool:
+    letras = [c for c in texto if c.isalpha()]
+    return len(letras) >= 25 and sum(c.isupper() for c in letras) / len(letras) > 0.8
+
+
+def frase_normal(texto: str) -> str:
+    """'MAS VIVES, E VIVES' -> 'Mas vives, e vives' (só muda maiúsculas/minúsculas)."""
+    t = texto.lower()
+    return re.sub(r"(^|[.!?…]\s+)(\w)", lambda m: m.group(1) + m.group(2).upper(), t)
+
+
 def compactar_repeticoes(texto: str) -> str:
     """'não não não não não' -> 'não' (laço típico do modelo)."""
     return re.sub(r"((?:\S+\s+){1,8}?)\1{3,}", r"\1", texto + " ").strip()
@@ -340,6 +351,8 @@ class Limpeza:
             tx = compactar_repeticoes(re.sub(r"\s+", " ", tx).strip())
             if not tx or eh_alucinacao(tx):
                 continue
+            if maiusculas_demais(tx):
+                tx = frase_normal(tx)
             chave = re.sub(r"\W+", "", tx.lower())
             if chave == self.ultimo:
                 self.repeticoes += 1
@@ -374,6 +387,8 @@ def agrupar_paragrafos(segs, pausa: float = 2.5, alvo: int = 350, maximo: int = 
 
 def montar_prompt(base: str, contexto: str, limite: int = 220) -> str:
     contexto = contexto.strip()
+    if maiusculas_demais(contexto):      # não "contamina" o próximo bloco com caixa alta
+        contexto = frase_normal(contexto)
     if len(contexto) > limite:
         corte = contexto.find(" ", len(contexto) - limite)
         contexto = contexto[corte + 1:] if corte >= 0 else contexto[-limite:]
@@ -1107,6 +1122,8 @@ def cmd_aovivo(a) -> int:
                     info["url"], data_br(info["data"]) or f"{inicio_cap:%d/%m/%Y}",
                     a.nome_modelo, extras,
                     nota_tempo="Os tempos [hh:mm:ss] contam a partir do início da gravação pelo celular.")
+    if "-bs" not in (a.whisper_extra or "") and "--beam-size" not in (a.whisper_extra or ""):
+        a.whisper_extra = ("-bs 1 " + (a.whisper_extra or "")).strip()   # rascunho: decodificação rápida
     parada = Parada(lambda: (captura.parar.set(), captura.matar()))
     parada.instalar()
     captura.start()
@@ -1192,6 +1209,7 @@ def paragrafos_legenda(palavras):
             pars.append((t_atual, texto))
 
     for t, u, fim in palavras:
+        u = re.sub(r"\[[^\]]{1,40}\]", " ", u)    # marcas de som: [aplausos], [limpando a garganta]...
         for k, pedaco in enumerate(u.split(">>")):
             troca = k > 0
             if atual and (troca or t - fim_ant > 2.5 or len(atual) > 900
@@ -1307,19 +1325,24 @@ def cmd_velocidade(a) -> int:
         nome, _, caminho = item.partition("=")
         if not os.path.isfile(caminho):
             continue
-        w = Whisper(a.whisper, caminho, None, a.threads, "en")
-        t = time.time()
-        try:
-            w.transcrever(wav, "", dur)
-        except RuntimeError as e:
-            avisar(f"  {nome:8s} falhou: {e}")
+        fatores = []
+        for extra in (["-bs", "1"], []):          # ao vivo (rápido) e fiel (beam search)
+            w = Whisper(a.whisper, caminho, None, a.threads, "en", extra)
+            t = time.time()
+            try:
+                w.transcrever(wav, "", dur)
+            except RuntimeError as e:
+                avisar(f"  {nome:8s} falhou: {e}")
+                break
+            fatores.append(dur / (time.time() - t))
+        if len(fatores) < 2:
             continue
-        gasto = time.time() - t
-        fator = dur / gasto
-        uso = "serve para AO VIVO" if fator >= 1.6 else "lento para ao vivo (use só na versão fiel)"
-        avisar(f"  {nome:8s} {fator:5.1f}x o tempo real -> {uso}; uma sessão de 4h levaria "
-               f"~{duracao_humana(4 * 3600 / fator)}")
-        print(f"RESULTADO {nome} {fator:.2f}", flush=True)
+        rapido, fiel = fatores
+        uso = "serve para AO VIVO" if rapido >= 1.6 else "lento para ao vivo"
+        avisar(f"  {nome:8s} ao vivo {rapido:4.1f}x ({uso}) · versão fiel {fiel:4.1f}x: "
+               f"sessão de 4h em ~{duracao_humana(4 * 3600 / fiel)}")
+        print(f"RESULTADO {nome} {rapido:.2f} {fiel:.2f}", flush=True)
+    avisar("\n(1x = o tempo da própria sessão; 2x = metade do tempo)")
     return 0
 
 
@@ -1712,7 +1735,7 @@ def principal(argv=None) -> int:
     p.add_argument("--repo", default=os.environ.get("TCE_REPO", "FaithfulSnake/TCETranscritor"))
     p.add_argument("--token-arquivo", default=os.environ.get("TCE_TOKEN", "~/.config/tce/token"))
     p.add_argument("--modelo-nuvem", default=os.environ.get("TCE_MODELO_NUVEM", "turbo"))
-    p.add_argument("--partes", type=int, default=int(os.environ.get("TCE_PARTES_NUVEM", "8")))
+    p.add_argument("--partes", type=int, default=int(os.environ.get("TCE_PARTES_NUVEM", "16")))
     opcoes_comuns(p)
 
     a = ap.parse_args(argv)

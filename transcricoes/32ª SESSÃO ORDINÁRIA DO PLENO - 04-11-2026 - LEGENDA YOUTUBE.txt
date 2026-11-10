@@ -5,7 +5,7 @@ Canal:  TCEMA.OFICIAL
 Link:   https://www.youtube.com/watch?v=Q508LGeyL0k
 Data:   04/11/2026
 Duração: 04:12:40
-Gerado em 05/11/2026 13:55 a partir da legenda automática (pt) do próprio YouTube.
+Gerado em 05/11/2026 a partir da legenda automática (pt) do próprio YouTube.
 A legenda automática do YouTube erra nomes e números; '—' marca troca de quem fala.
 Para a versão fiel (Whisper): tce gravada https://www.youtube.com/watch?v=Q508LGeyL0k
 Os tempos [hh:mm:ss] indicam a posição no vídeo.
@@ -802,4 +802,4 @@ Os tempos [hh:mm:ss] indicam a posição no vídeo.
 [04:12:22] — Proclamando o resultado, consideramos aprovado todos os processos na forma e dos respectivos votos do relator. Não mais havendo nada a tratar, declaro encerrada a presente sessão.
 
 ========================================================================
-Fim. 395 parágrafos.
+Fim. 395 parágrafos. Marcas de som da legenda foram retiradas.

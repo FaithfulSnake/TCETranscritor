@@ -108,6 +108,10 @@ print(pars)
 assert pars[0] == (0.0, "até quando ó catilina"), pars
 assert pars[1][1] == "abusarás da nossa paciência", pars
 print("  OK    legenda json3 vira parágrafos")
+t = "MAS VIVES, E VIVES NÃO PARA CEDER. DESEJO SER CLEMENTE PARA CONVOSCO"
+assert m.Limpeza().filtrar([(0, 1, t)])[0][2] == "Mas vives, e vives não para ceder. Desejo ser clemente para convosco"
+assert m.Limpeza().filtrar([(0, 1, "Processo do TCE-MA, relator.")])[0][2] == "Processo do TCE-MA, relator."
+print("  OK    trecho travado em MAIÚSCULAS volta ao normal")
 EOF
 [ $? -eq 0 ] || falhas=$((falhas + 1))
 

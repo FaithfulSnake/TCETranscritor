@@ -9,7 +9,7 @@ sem assinatura e sem PC.
 |---|---|---|
 | Acompanhar uma live **agora** | **AO VIVO** | texto aparece na hora (a cada ~25 s) e vai sendo salvo no TXT |
 | Transcrição integral de uma sessão gravada | **FIEL** (no celular) | TXT com o modelo grande (Whisper large-v3-turbo) |
-| A mesma coisa, rápido e sem esquentar o celular | **NUVEM** (GitHub Actions) | TXT pronto em ~30-60 min, grátis |
+| A mesma coisa, rápido e sem esquentar o celular | **NUVEM** (GitHub Actions) | TXT pronto em ~30 min, grátis |
 | Só uma ideia rápida do que foi dito | **LEGENDA** | legenda automática do próprio YouTube em segundos |
 | Um áudio/vídeo que já está no celular | **ARQUIVO** | TXT do arquivo |
 
@@ -98,10 +98,14 @@ Depende do celular; rode `tce velocidade` para ver os números do seu. Referênc
 - **AO VIVO** (modelo `small`): no teste automático dentro do Termux (processador ARM
   de 4 núcleos) rodou a 3x o tempo real, ou seja, sobra folga para acompanhar a live.
   Se o seu celular não der conta, o instalador troca sozinho para o `base`.
-- **FIEL no celular** (modelo `turbo`): em celular intermediário, algo entre 1x e 3x a
-  duração da sessão (4 h de sessão podem levar a noite). Deixe na tomada.
-- **NUVEM**: a sessão é dividida em até 8 partes transcritas ao mesmo tempo; 4 h de
-  sessão ficam prontas em cerca de 30 a 60 minutos.
+- **FIEL no celular** (modelo `turbo`): bem mais pesado que o `small`; em celular
+  intermediário, algo entre 1x e 3x a duração da sessão (4 h de sessão podem levar a
+  noite). Deixe na tomada, ou use a **NUVEM**, ou a opção **RÁPIDA** (`small`, que no
+  teste ficou bom em português e roda ~2,5x mais rápido que o tempo real).
+- **NUVEM**: a sessão é dividida em até 16 partes transcritas ao mesmo tempo com o
+  modelo grande. No teste, 30 min de áudio em 3 partes ficaram prontos em 22 min
+  (já contando a primeira compilação); cada máquina faz ~0,6x o tempo real, então
+  4 h de sessão em 16 partes devem ficar prontas em cerca de 30 minutos.
 
 ## Nuvem do GitHub (opcional, uma vez só)
 

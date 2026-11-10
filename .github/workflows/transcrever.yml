@@ -29,7 +29,7 @@ on:
       partes:
         description: "Máquinas em paralelo (1 a 16)"
         required: false
-        default: "8"
+        default: "16"
       link:
         description: "Link do vídeo original (opcional, vai no cabeçalho)"
         required: false
@@ -87,7 +87,7 @@ jobs:
           TITULO: ${{ inputs.titulo }}
           ARQUIVO: ${{ inputs.arquivo }}
         run: |
-          n="${PARTES//[^0-9]/}"; n="${n:-8}"; [ "$n" -gt 16 ] && n=16; [ "$n" -lt 1 ] && n=1
+          n="${PARTES//[^0-9]/}"; n="${n:-16}"; [ "$n" -gt 16 ] && n=16; [ "$n" -lt 1 ] && n=1
           python3 tce/motor.py dividir entrada.audio --partes "$n" > partes.json
           cat partes.json
           dur=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 entrada.audio)

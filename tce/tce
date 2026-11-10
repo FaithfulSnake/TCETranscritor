@@ -26,7 +26,7 @@ NOTIFICAR=0
 PROMPT=""
 REPO=""
 MODELO_NUVEM="turbo"
-PARTES_NUVEM=8
+PARTES_NUVEM=16
 # shellcheck source=/dev/null
 [ -f "$TCE_CONFIG" ] && . "$TCE_CONFIG"
 
@@ -324,7 +324,11 @@ cmd_velocidade() {
   done
   [ ${#args[@]} -gt 0 ] || { falha "Nenhum modelo baixado. Rode: tce modelos baixar small"; return 1; }
   titulo "Velocidade neste aparelho"
-  motor velocidade --amostra "$amostra" "${args[@]}" | grep -v '^RESULTADO'
+  if [ -n "${TCE_MOSTRAR_RESULTADO:-}" ]; then
+    motor velocidade --amostra "$amostra" "${args[@]}"
+  else
+    motor velocidade --amostra "$amostra" "${args[@]}" | grep -v '^RESULTADO'
+  fi
   echo
   echo "Ao vivo usa: $MODELO_AOVIVO    Versão fiel usa: $MODELO_FIEL"
   echo "Para trocar, edite $TCE_CONFIG (ex.: MODELO_AOVIVO=\"base\")."
