@@ -46,15 +46,70 @@ jobs_compilacao() {   # menos processos em paralelo em celular com pouca memóri
 }
 
 # ---------------------------------------------------------------------------
+# Servidores de pacotes do Termux. O `pkg` sorteia um espelho e só confere se ele
+# responde; um espelho no meio da sincronização ("Mirror sync in progress?") passa
+# nessa conferência e entrega um índice quebrado. Aqui o índice é conferido de
+# verdade e, se falhar, o instalador troca para o servidor oficial ou outro espelho.
+PACOTES_BASE=(python python-pip ffmpeg git cmake clang make curl)
+
+indice_ok() {
+  local saida rc=0
+  saida="$(apt-get update 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ] || echo "$saida" | grep -qE "^(E|Err):|Failed to fetch|Mirror sync|Hash Sum mismatch|unexpected size"; then
+    echo "$saida" | grep -E "^(E|Err):" | head -3 | sed 's/^/    /'
+    return 1
+  fi
+  apt-cache show "${PACOTES_BASE[@]}" >/dev/null 2>&1
+}
+
+usar_espelho() {  # usar_espelho ARQUIVO  (arquivos em $PREFIX/etc/termux/mirrors)
+  local arq="$1" dir="$PREFIX/etc/apt"
+  [ -f "$arq" ] || return 1
+  (
+    unset MAIN X11 ROOT WEIGHT
+    # shellcheck source=/dev/null
+    . "$arq"
+    [ -n "${MAIN:-}" ] || exit 1
+    if [ -f "$dir/sources.list.d/main.sources" ]; then
+      sed -i "s|^URIs:.*|URIs: $MAIN|" "$dir/sources.list.d/main.sources"
+    else
+      echo "deb $MAIN stable main" > "$dir/sources.list"
+    fi
+    if [ -n "${X11:-}" ]; then
+      [ -f "$dir/sources.list.d/x11.sources" ] && sed -i "s|^URIs:.*|URIs: $X11|" "$dir/sources.list.d/x11.sources"
+      [ -f "$dir/sources.list.d/x11.list" ] && echo "deb $X11 x11 main" > "$dir/sources.list.d/x11.list"
+    fi
+    if [ -n "${ROOT:-}" ]; then
+      [ -f "$dir/sources.list.d/root.sources" ] && sed -i "s|^URIs:.*|URIs: $ROOT|" "$dir/sources.list.d/root.sources"
+      [ -f "$dir/sources.list.d/root.list" ] && echo "deb $ROOT root stable" > "$dir/sources.list.d/root.list"
+    fi
+    exit 0
+  )
+}
+
+preparar_indice() {
+  local espelhos="$PREFIX/etc/termux/mirrors" arq
+  echo "    conferindo o servidor de pacotes..."
+  if indice_ok; then ok "servidor de pacotes"; return 0; fi
+  aviso "o servidor de pacotes do Termux usado por este celular está com problema; trocando para o oficial"
+  if usar_espelho "$espelhos/default" && indice_ok; then ok "usando o servidor oficial do Termux"; return 0; fi
+  while IFS= read -r arq; do
+    echo "    tentando outro servidor: $(basename "$arq")"
+    if usar_espelho "$arq" && indice_ok; then ok "usando $(basename "$arq")"; return 0; fi
+  done < <(find "$espelhos" -type f ! -name default ! -name '*.dpkg-*' ! -name '*~' 2>/dev/null | shuf | head -6)
+  return 1
+}
+
 instalar_pacotes() {
   passo "Pacotes do sistema (pode levar alguns minutos)"
   if eh_termux; then
     export DEBIAN_FRONTEND=noninteractive
+    export TERMUX_PKG_NO_MIRROR_SELECT=1   # o `pkg` não sorteia de novo durante a instalação
     local opts=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-    pkg update -y >/dev/null 2>&1 || apt-get update || true
+    preparar_indice || morrer "nenhum servidor de pacotes do Termux respondeu direito. Confira a internet e rode o instalador de novo daqui a alguns minutos (ou rode 'termux-change-repo', escolha outro servidor e tente de novo)."
     apt-get "${opts[@]}" upgrade || aviso "não consegui atualizar todos os pacotes (seguindo mesmo assim)"
-    apt-get "${opts[@]}" install python python-pip ffmpeg git cmake clang make curl \
-      || morrer "falha ao instalar os pacotes básicos. Rode 'pkg update' e tente de novo."
+    apt-get "${opts[@]}" install "${PACOTES_BASE[@]}" \
+      || morrer "falha ao instalar os pacotes básicos. Rode o instalador de novo; se repetir, rode 'termux-change-repo', escolha outro servidor e tente de novo."
     # opcionais: cada um separado para um nome ausente não derrubar a instalação
     local p
     for p in deno python-numpy python-brotli python-pycryptodomex termux-api; do

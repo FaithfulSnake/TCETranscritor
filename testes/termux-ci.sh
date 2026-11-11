@@ -4,8 +4,18 @@
 set -euo pipefail
 AMOSTRA_URL="$1"
 cd "$HOME"
+echo "== simulando um servidor de pacotes quebrado (como o 'Mirror sync in progress' de um celular real)"
+quebrado="https://packages-cf.termux.dev/apt/termux-main-quebrado"
+if [ -f "$PREFIX/etc/apt/sources.list.d/main.sources" ]; then
+  sed -i "s|^URIs:.*|URIs: $quebrado|" "$PREFIX/etc/apt/sources.list.d/main.sources"
+else
+  echo "deb $quebrado stable main" > "$PREFIX/etc/apt/sources.list"
+fi
+rm -rf "$PREFIX"/var/lib/apt/lists/*
 echo "== instalando (modo teste)"
-TCE_TESTE=1 TCE_FONTE="$HOME/src" TCE_MODELOS="small" bash "$HOME/src/instalar.sh"
+TCE_TESTE=1 TCE_FONTE="$HOME/src" TCE_MODELOS="small" bash "$HOME/src/instalar.sh" 2>&1 | tee "$HOME/instalacao.log"
+grep -q "trocando para o oficial" "$HOME/instalacao.log"
+echo "== o instalador trocou sozinho para o servidor oficial: OK"
 echo "== versões"
 yt-dlp --version
 (deno --version || node --version) | head -1
