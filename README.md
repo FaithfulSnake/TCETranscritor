@@ -81,7 +81,7 @@ Link:   https://www.youtube.com/watch?v=...
 | `tce nuvem fiel` | manda a última live gravada para a nuvem |
 | `tce fiel` | versão fiel da última live gravada, no celular |
 | `tce legenda LINK` | legenda do YouTube em TXT |
-| `tce arquivo CAMINHO` | arquivo do celular (ou: arquivo > Compartilhar > Termux) |
+| `tce arquivo` | vídeo ou áudio que já está no celular: mostra os mais recentes para escolher pelo número (ou: arquivo > Compartilhar > Termux > EDIT) |
 | `tce velocidade` | mede quanto tempo cada modelo leva neste celular |
 | `tce atualizar` | atualiza (rode se o YouTube começar a dar erro) |
 | `tce ajuda` | todos os comandos |
