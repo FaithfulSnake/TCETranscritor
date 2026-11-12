@@ -1370,6 +1370,8 @@ def cmd_velocidade(a) -> int:
     wav = os.path.join(pasta, "amostra.wav")
     gravar_wav(wav, pcm)
     base_extra = shlex.split(a.whisper_extra or "")
+    # com o VAD, como na transcrição de verdade (ele também custa tempo)
+    vad = a.vad_modelo if a.vad_modelo and os.path.isfile(a.vad_modelo) else None
     sem_gpu = " (sem GPU)" if ("-ng" in base_extra or "--no-gpu" in base_extra) else ""
     avisar(f"Teste com {dur:.0f} s de fala, {a.threads} threads{sem_gpu}:\n")
     for item in a.modelos:
@@ -1378,7 +1380,7 @@ def cmd_velocidade(a) -> int:
             continue
         fatores = []
         for extra in (["-bs", "1"], []):          # ao vivo (rápido) e fiel (beam search)
-            w = Whisper(a.whisper, caminho, None, a.threads, "en", base_extra + extra)
+            w = Whisper(a.whisper, caminho, vad, a.threads, "en", base_extra + extra)
             t = time.time()
             try:
                 w.transcrever(wav, "", dur)

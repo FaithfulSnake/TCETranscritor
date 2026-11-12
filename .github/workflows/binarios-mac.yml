@@ -29,9 +29,17 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
       - name: whisper.cpp
         run: |
           git clone --depth 1 --quiet --branch "$WHISPER_VERSAO" https://github.com/ggml-org/whisper.cpp w
+          # O VAD (Silero) do whisper.cpp usa sempre 4 threads, ignorando o -t. Em máquina com
+          # menos de 4 núcleos isso o deixa dezenas de vezes mais lento (3 min de áudio levaram
+          # 16 min num Mac de 3 núcleos). O modelo do VAD é minúsculo: 1 thread basta.
+          perl -0pi -e 's/(struct whisper_vad_context_params vad_ctx_params = whisper_vad_default_context_params\(\);)/$1\n        vad_ctx_params.n_threads = 1; \/\/ TCE Transcritor/' w/src/whisper.cpp
+          grep -n "vad_ctx_params.n_threads = 1" w/src/whisper.cpp
           flags=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF
                  -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
           if [ "${{ matrix.arq }}" = arm64 ]; then
@@ -77,3 +85,8 @@ jobs:
               --notes "Usados pelo instalador do Mac. Gerados pelo workflow binarios-mac.yml." || true
           sleep 5
           gh release upload binarios-mac out/* --clobber --repo "$GITHUB_REPOSITORY"
+          # por último, a versão (o instalador e os testes conferem por ela)
+          sed -n 's/^VERSAO_BIN_MAC="\([^"]*\)".*/\1/p' repo/instalar.sh > "versao-macos-${{ matrix.arq }}.txt"
+          cat "versao-macos-${{ matrix.arq }}.txt"
+          test -s "versao-macos-${{ matrix.arq }}.txt"
+          gh release upload binarios-mac "versao-macos-${{ matrix.arq }}.txt" --clobber --repo "$GITHUB_REPOSITORY"

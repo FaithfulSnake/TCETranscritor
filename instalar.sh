@@ -31,7 +31,7 @@ eh_termux() { [ -n "${PREFIX:-}" ] && [[ "$PREFIX" == *com.termux* ]]; }
 eh_mac()    { [ "$(uname -s)" = "Darwin" ]; }
 mac_arm()   { [ "$(uname -m)" = arm64 ] || [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; }  # chip Apple (até sob Rosetta)
 URL_BIN_MAC="$REPO_URL/releases/download/binarios-mac"
-VERSAO_BIN_MAC="whisper-$WHISPER_VERSAO+ffmpeg-8.0"   # mude junto com o binarios-mac.yml
+VERSAO_BIN_MAC="whisper-v1.9.5-vad1+ffmpeg-8.0"   # mude junto com o binarios-mac.yml (ele publica esta versão)
 
 if eh_termux; then
   BIN_GLOBAL="$PREFIX/bin"

@@ -153,17 +153,22 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      - name: Esperar os binários do Mac (release binarios-mac)
+      - name: Esperar os binários do Mac na versão que o instalador pede
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 1 60); do
-            n=$(gh release view binarios-mac --repo "$GITHUB_REPOSITORY" --json assets \
-                  --jq '[.assets[].name | select(endswith("macos-arm64"))] | length' 2>/dev/null || echo 0)
-            [ "$n" -ge 3 ] && { echo "binários prontos"; exit 0; }
+          esperado=$(sed -n 's/^VERSAO_BIN_MAC="\([^"]*\)".*/\1/p' instalar.sh)
+          echo "versão esperada: $esperado"
+          for i in $(seq 1 80); do
+            rm -rf "$RUNNER_TEMP/v"
+            gh release download binarios-mac --repo "$GITHUB_REPOSITORY" --pattern versao-macos-arm64.txt \
+              --dir "$RUNNER_TEMP/v" >/dev/null 2>&1 || true
+            v=$(cat "$RUNNER_TEMP/v/versao-macos-arm64.txt" 2>/dev/null || true)
+            [ "$v" = "$esperado" ] && { echo "binários prontos: $v"; exit 0; }
+            echo "publicada: ${v:-nenhuma}; esperando..."
             sleep 30
           done
-          echo "os binários do Mac não foram publicados"; exit 1
+          echo "os binários do Mac nessa versão não foram publicados"; exit 1
       - name: Instalar no Mac (bash do sistema, sem admin, sem Homebrew)
         env:
           TCE_TESTE: "1"
