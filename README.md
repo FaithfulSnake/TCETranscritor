@@ -2,8 +2,9 @@
 
 Transcrição **integral** de lives e vídeos do YouTube (por exemplo, as sessões do
 TCE-MA no canal [TCEMA.OFICIAL](https://www.youtube.com/@TCEMAOFICIAL)) **direto no
-celular Android**, com o TXT salvo na pasta **Download**. Tudo grátis e de código aberto,
-sem assinatura e sem PC.
+celular Android**, com o TXT salvo na pasta **Download**. Também roda no computador,
+sem administrador: [Windows](#no-computador-com-windows-sem-administrador) e
+[Mac](#no-mac-sem-administrador). Tudo grátis e de código aberto, sem assinatura.
 
 | O que você quer | O que usar | Resultado |
 |---|---|---|
