@@ -147,3 +147,57 @@ jobs:
         with:
           name: resultados-windows
           path: saida
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Esperar os binários do Mac (release binarios-mac)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 60); do
+            n=$(gh release view binarios-mac --repo "$GITHUB_REPOSITORY" --json assets \
+                  --jq '[.assets[].name | select(endswith("macos-arm64"))] | length' 2>/dev/null || echo 0)
+            [ "$n" -ge 3 ] && { echo "binários prontos"; exit 0; }
+            sleep 30
+          done
+          echo "os binários do Mac não foram publicados"; exit 1
+      - name: Instalar no Mac (bash do sistema, sem admin, sem Homebrew)
+        env:
+          TCE_TESTE: "1"
+          TCE_MODELOS: "small"
+        run: |
+          mkdir -p ~/Downloads
+          TCE_FONTE="$GITHUB_WORKSPACE" /bin/bash instalar.sh
+          head -2 ~/.local/bin/tce
+      - name: Transcrever 3 min de fala pelo comando tce
+        run: |
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/completo.mp3" "$AMOSTRA_URL"
+          ~/.local/share/tce/bin/ffmpeg -nostdin -loglevel error -y -i "$RUNNER_TEMP/completo.mp3" \
+            -t 180 -c copy "$HOME/Downloads/Sessão teste.mp3"
+          sed -i.bak 's/^MODELO_FIEL=.*/MODELO_FIEL="small"/' ~/.config/tce/config
+          printf '1\n' | ~/.local/bin/tce arquivo
+          f="$(ls ~/Downloads/TCE-Transcricoes/*.txt | head -1)"
+          cat "$f"
+          grep -qi catilina "$f"
+          mkdir -p saida && cp "$f" saida/
+      - name: Caminho arrastado do Finder (bash 3.2 do próprio macOS)
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash -uc 'eval "$(sed -n "/^limpar_caminho/,/^}/p" tce/tce)"
+            r="$(limpar_caminho "$HOME/Downloads/Sessão\ teste.mp3 ")"; echo "[$r]"; [ -f "$r" ]'
+      - name: Velocidade, ajuda, modelos e atalho
+        run: |
+          ~/.local/bin/tce velocidade
+          ~/.local/bin/tce ajuda | sed -n 1,6p
+          ~/.local/bin/tce modelos
+          ~/.local/bin/tce pasta
+          cat ~/.zshrc
+          ls -la ~/Desktop/*.command 2>/dev/null || echo "(sem Mesa no runner)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resultados-mac
+          path: saida

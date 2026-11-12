@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Instalador do TCE Transcritor.
 #
-# No Termux (Android), cole e tecle Enter:
+# No Termux (Android) ou no Terminal do Mac, cole e tecle Enter:
 #   curl -fsSL https://raw.githubusercontent.com/FaithfulSnake/TCETranscritor/HEAD/instalar.sh | bash
+# (No Mac não precisa de senha de administrador, Xcode nem Homebrew.)
 #
 # Pode rodar de novo quando quiser: ele só refaz o que faltar.
 # Variáveis opcionais:
@@ -27,6 +28,10 @@ aviso() { cor "33" "    atenção: $*"; }
 morrer(){ cor "31" "ERRO: $*"; exit 1; }
 
 eh_termux() { [ -n "${PREFIX:-}" ] && [[ "$PREFIX" == *com.termux* ]]; }
+eh_mac()    { [ "$(uname -s)" = "Darwin" ]; }
+mac_arm()   { [ "$(uname -m)" = arm64 ] || [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; }  # chip Apple (até sob Rosetta)
+URL_BIN_MAC="$REPO_URL/releases/download/binarios-mac"
+VERSAO_BIN_MAC="whisper-$WHISPER_VERSAO+ffmpeg-8.0"   # mude junto com o binarios-mac.yml
 
 if eh_termux; then
   BIN_GLOBAL="$PREFIX/bin"
@@ -35,7 +40,7 @@ else
 fi
 mkdir -p "$TCE_DADOS/bin" "$TCE_DADOS/modelos" "$BIN_GLOBAL" "$HOME/.config/tce"
 
-nucleos() { nproc 2>/dev/null || echo 4; }
+nucleos() { nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4; }
 jobs_compilacao() {   # menos processos em paralelo em celular com pouca memória
   local mem_kb n
   mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 4000000)
@@ -118,6 +123,9 @@ instalar_pacotes() {
     if ! command -v deno >/dev/null 2>&1; then
       apt-get "${opts[@]}" install nodejs >/dev/null 2>&1 && ok "nodejs (no lugar do deno)" || true
     fi
+  elif eh_mac; then
+    local p
+    for p in curl unzip tar; do command -v "$p" >/dev/null 2>&1 || morrer "falta o comando $p no Mac"; done
   else
     local falta=()
     for p in python3 ffmpeg git cmake curl; do command -v "$p" >/dev/null 2>&1 || falta+=("$p"); done
@@ -139,6 +147,32 @@ instalar_ytdlp() {
     python -m pip install -U --quiet "yt-dlp[default]" 2>&1 | tail -3 \
       || python -m pip install -U --quiet yt-dlp yt-dlp-ejs \
       || morrer "falha ao instalar o yt-dlp"
+  elif eh_mac; then
+    local uv; uv="$(command -v uv || echo "$TCE_DADOS/bin/uv")"
+    if [ ! -x "$uv" ]; then
+      curl -LsSf https://astral.sh/uv/install.sh \
+        | env UV_INSTALL_DIR="$TCE_DADOS/bin" UV_NO_MODIFY_PATH=1 sh >/dev/null \
+        || morrer "não consegui instalar o uv (que traz o Python)"
+      uv="$TCE_DADOS/bin/uv"
+    fi
+    if ! "$TCE_DADOS/venv/bin/python" -c "" >/dev/null 2>&1; then
+      rm -rf "$TCE_DADOS/venv"
+      "$uv" venv --quiet --python 3.13 --python-preference only-managed "$TCE_DADOS/venv" \
+        || morrer "falha ao preparar o Python"
+    fi
+    ok "Python $("$TCE_DADOS/venv/bin/python" -c 'import platform; print(platform.python_version())')"
+    "$uv" pip install --quiet --python "$TCE_DADOS/venv/bin/python" -U "yt-dlp[default]" numpy \
+      || morrer "falha ao instalar o yt-dlp"
+    if [ ! -x "$TCE_DADOS/bin/deno" ]; then
+      local arq_deno=x86_64; mac_arm && arq_deno=aarch64
+      local tmp; tmp="$(mktemp -d)"
+      curl -fsSL -o "$tmp/deno.zip" \
+        "https://github.com/denoland/deno/releases/latest/download/deno-$arq_deno-apple-darwin.zip" \
+        && unzip -o -q "$tmp/deno.zip" -d "$TCE_DADOS/bin" && chmod +x "$TCE_DADOS/bin/deno" \
+        || aviso "não consegui baixar o deno (o YouTube pode recusar alguns downloads)"
+      rm -rf "$tmp"
+    fi
+    export PATH="$TCE_DADOS/bin:$PATH"
   else
     if [ ! -x "$TCE_DADOS/venv/bin/python" ]; then
       python3 -m venv "$TCE_DADOS/venv" || morrer "falha ao criar o ambiente Python (instale python3-venv)"
@@ -164,17 +198,52 @@ instalar_scripts() {
     rm -rf "$TCE_APP"
     mkdir -p "$TCE_APP"
     cp -R "$TCE_FONTE"/. "$TCE_APP"/
-  elif [ -d "$TCE_APP/.git" ]; then
+  elif [ -d "$TCE_APP/.git" ] && tem_git; then
     git -C "$TCE_APP" pull --ff-only --quiet || aviso "não consegui atualizar (seguindo com a versão atual)"
-  else
+  elif tem_git && ! eh_mac; then
     rm -rf "$TCE_APP"
     git clone --depth 1 --quiet "$REPO_URL" "$TCE_APP" || morrer "não consegui baixar os scripts de $REPO_URL"
+  else
+    local tmp; tmp="$(mktemp -d)"
+    curl -fsSL -o "$tmp/app.zip" "$REPO_URL/archive/HEAD.zip" || morrer "não consegui baixar os scripts de $REPO_URL"
+    unzip -q "$tmp/app.zip" -d "$tmp/x"
+    rm -rf "$TCE_APP"
+    mv "$tmp"/x/* "$TCE_APP"
+    rm -rf "$tmp"
   fi
   chmod +x "$TCE_APP/tce/tce" "$TCE_APP/tce/motor.py" 2>/dev/null || true
   ok "$TCE_APP"
 }
 
+tem_git() {  # no Mac sem as ferramentas do Xcode o "git" só abre um aviso pedindo instalação
+  command -v git >/dev/null 2>&1 || return 1
+  ! eh_mac || xcode-select -p >/dev/null 2>&1
+}
+
+baixar_binarios_mac() {
+  local arq=x86_64; mac_arm && arq=arm64
+  passo "Programas prontos para Mac ($arq): whisper.cpp e ffmpeg"
+  local nome marca="$TCE_DADOS/bin/.versao_binarios_mac" novo=""
+  if [ -n "${TCE_SO_WHISPER:-}" ] || [ "$(cat "$marca" 2>/dev/null)" != "$VERSAO_BIN_MAC" ]; then novo=1; fi
+  for nome in whisper-cli ffmpeg ffprobe; do
+    if [ -n "$novo" ] || [ ! -x "$TCE_DADOS/bin/$nome" ]; then
+      curl -fL --retry 5 --progress-bar -o "$TCE_DADOS/bin/$nome.part" "$URL_BIN_MAC/$nome-macos-$arq" \
+        || morrer "não consegui baixar $nome para Mac ($URL_BIN_MAC)"
+      mv -f "$TCE_DADOS/bin/$nome.part" "$TCE_DADOS/bin/$nome"
+      chmod +x "$TCE_DADOS/bin/$nome"
+      xattr -d com.apple.quarantine "$TCE_DADOS/bin/$nome" 2>/dev/null || true
+    fi
+  done
+  echo "$VERSAO_BIN_MAC" > "$marca"
+  mkdir -p "$TCE_DADOS/whisper.cpp/samples"
+  [ -s "$TCE_DADOS/whisper.cpp/samples/jfk.wav" ] || curl -fsSL -o "$TCE_DADOS/whisper.cpp/samples/jfk.wav" \
+    "https://raw.githubusercontent.com/ggml-org/whisper.cpp/$WHISPER_VERSAO/samples/jfk.wav"
+  if [ "$arq" = arm64 ]; then ok "whisper-cli (usa a GPU do Mac), ffmpeg e ffprobe"
+  else ok "whisper-cli, ffmpeg e ffprobe (Mac Intel)"; fi
+}
+
 compilar_whisper() {
+  if eh_mac; then baixar_binarios_mac; return; fi
   local src="$TCE_DADOS/whisper.cpp"
   if [ ! -f "$src/CMakeLists.txt" ] || [ "$(cat "$src/.versao_tce" 2>/dev/null)" != "$WHISPER_VERSAO" ]; then
     passo "Baixando o whisper.cpp $WHISPER_VERSAO"
@@ -203,12 +272,33 @@ compilar_whisper() {
 instalar_comandos() {
   passo "Comandos e atalhos"
   local bash_bin; bash_bin="$(command -v bash)"
+  eh_mac && bash_bin=/bin/bash          # o bash do próprio macOS (existe em todo Mac)
   cat > "$BIN_GLOBAL/tce" <<EOF
 #!$bash_bin
 exec "$bash_bin" "$TCE_APP/tce/tce" "\$@"
 EOF
   chmod +x "$BIN_GLOBAL/tce"
   ok "comando 'tce'"
+
+  if eh_mac; then
+    # ~/.local/bin no PATH (zsh é o padrão do Mac; no bash, sem esconder um ~/.profile existente)
+    local rcs=("$HOME/.zshrc") rc
+    if [ -f "$HOME/.bash_profile" ]; then rcs+=("$HOME/.bash_profile")
+    elif [ -f "$HOME/.profile" ]; then rcs+=("$HOME/.profile")
+    elif [[ "${SHELL:-}" == */bash ]]; then rcs+=("$HOME/.bash_profile"); fi
+    for rc in "${rcs[@]}"; do
+      grep -qs 'TCE Transcritor' "$rc" \
+        || printf '\n# TCE Transcritor\nexport PATH="$HOME/.local/bin:$PATH"\n' 2>/dev/null >> "$rc" \
+        || aviso "não consegui pôr o tce no PATH em $rc"
+    done
+    local atalho="$HOME/Desktop/TCE Transcritor.command"
+    if [ -d "$HOME/Desktop" ] && printf '#!%s\nexec "%s" "%s" menu\n' "$bash_bin" "$bash_bin" \
+         "$TCE_APP/tce/tce" > "$atalho" 2>/dev/null && chmod +x "$atalho"; then
+      ok "atalho 'TCE Transcritor' na Mesa (dois cliques abre o menu)"
+    else
+      aviso "não consegui criar o atalho na Mesa (use o comando tce no Terminal)"
+    fi
+  fi
 
   if eh_termux; then
     mkdir -p "$HOME/bin" "$HOME/.shortcuts"
@@ -293,7 +383,7 @@ testar() {
   local saida rc=0
   saida="$("$TCE_DADOS/bin/whisper-cli" -m "$modelo" -f "$amostra" -l en -nt -np -t "$(jobs_compilacao)" 2>&1)" || rc=$?
   if [ "$rc" -eq 132 ] || [ "$rc" -eq 4 ] || echo "$saida" | grep -qi "illegal instruction"; then
-    if [ -z "${TCE_COMPATIVEL:-}" ]; then
+    if [ -z "${TCE_COMPATIVEL:-}" ] && ! eh_mac; then
       aviso "o processador recusou as otimizações; recompilando no modo compatível"
       TCE_COMPATIVEL=1 compilar_whisper
       testar
@@ -319,7 +409,7 @@ escolher_modelo_aovivo() {
   if [ -n "$fator" ] && awk "BEGIN {exit !($fator < 1.6)}"; then
     aviso "o modelo small é lento demais para ao vivo neste aparelho; usando o base"
     "$BIN_GLOBAL/tce" modelos baixar base || true
-    sed -i 's/^MODELO_AOVIVO=.*/MODELO_AOVIVO="base"/' "$CONFIG"
+    sed -i.bak 's/^MODELO_AOVIVO=.*/MODELO_AOVIVO="base"/' "$CONFIG" && rm -f "$CONFIG.bak"
   fi
 }
 
@@ -358,6 +448,14 @@ fi
 
 echo
 cor "1;32" "Tudo pronto!"
+if eh_mac; then
+  echo
+  echo "Como usar no Mac:"
+  echo "  * Abra uma janela NOVA do Terminal (ou dê dois cliques em 'TCE Transcritor' na Mesa) e digite:  tce"
+  echo "  * Ou direto:  tce aovivo LINK   |   tce gravada LINK   |   tce arquivo   |   tce ajuda"
+  echo "  * Os TXT ficam em Downloads/TCE-Transcricoes."
+  exit 0
+fi
 cat <<EOF
 
 Como usar:

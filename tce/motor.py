@@ -1312,6 +1312,47 @@ def cmd_legenda(a) -> int:
     return 0
 
 
+# ---- arquivos recentes do aparelho -----------------------------------------
+
+EXTENSOES_MIDIA = (".mp4", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".3gp", ".m4a", ".mp3",
+                   ".opus", ".ogg", ".wav", ".aac", ".amr", ".flac", ".wma", ".m4v")
+
+
+def arquivos_recentes(pastas, limite: int = 15, profundidade: int = 4):
+    achados = []
+    for pasta in pastas:
+        pasta = os.path.expanduser(pasta)
+        if not os.path.isdir(pasta):
+            continue
+        base = pasta.rstrip(os.sep).count(os.sep)
+        for raiz, dirs, arqs in os.walk(pasta):
+            if raiz.count(os.sep) - base >= profundidade:
+                dirs[:] = []
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for a in arqs:
+                if a.lower().endswith(EXTENSOES_MIDIA):
+                    c = os.path.join(raiz, a)
+                    try:
+                        st = os.stat(c)
+                    except OSError:
+                        continue
+                    if st.st_size > 100_000:
+                        achados.append((st.st_mtime, c))
+    vistos, lista = set(), []
+    for _, c in sorted(achados, reverse=True):
+        real = os.path.realpath(c)
+        if real not in vistos:
+            vistos.add(real)
+            lista.append(c)
+    return lista[:limite]
+
+
+def cmd_recentes(a) -> int:
+    for c in arquivos_recentes(a.pastas, a.limite):
+        print(c)
+    return 0
+
+
 # ---- teste de velocidade ----------------------------------------------------
 
 def cmd_velocidade(a) -> int:
@@ -1536,14 +1577,18 @@ def cmd_nuvem(a) -> int:
         ramo = repo["default_branch"]
 
         avisar(">> 1/4 Compactando o áudio para enviar...")
-        opus = os.path.join(pasta, f"{ident}.ogg")
-        cmd = [a.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
+        base_cmd = [a.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
         if entrada.endswith(".pcm"):
-            cmd += ["-f", "s16le", "-ar", str(TAXA), "-ac", "1"]
-        cmd += ["-i", entrada, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libopus",
-                "-b:a", "32k", "-application", "voip", opus]
-        if subprocess.run(cmd).returncode != 0:
-            raise RuntimeError("não consegui compactar o áudio com o ffmpeg")
+            base_cmd += ["-f", "s16le", "-ar", str(TAXA), "-ac", "1"]
+        base_cmd += ["-i", entrada, "-vn", "-ac", "1", "-ar", "16000"]
+        opus = os.path.join(pasta, f"{ident}.ogg")
+        tipo = "application/ogg"
+        if subprocess.run(base_cmd + ["-c:a", "libopus", "-b:a", "32k", "-application", "voip", opus],
+                          stderr=subprocess.DEVNULL).returncode != 0:
+            opus = os.path.join(pasta, f"{ident}.m4a")      # ffmpeg sem libopus: AAC
+            tipo = "audio/mp4"
+            if subprocess.run(base_cmd + ["-c:a", "aac", "-b:a", "48k", opus]).returncode != 0:
+                raise RuntimeError("não consegui compactar o áudio com o ffmpeg")
         tamanho = os.path.getsize(opus)
 
         avisar(f">> 2/4 Enviando {tamanho / 1e6:.0f} MB para o GitHub...")
@@ -1559,7 +1604,7 @@ def cmd_nuvem(a) -> int:
             asset = gh.req("POST", f"https://uploads.github.com/repos/{a.repo}/releases/{rel['id']}"
                            f"/assets?name={urllib.parse.quote(os.path.basename(opus))}",
                            _LeitorProgresso(f, tamanho),
-                           {"Content-Type": "application/ogg", "Content-Length": str(tamanho)},
+                           {"Content-Type": tipo, "Content-Length": str(tamanho)},
                            timeout=900)
         print()
 
@@ -1715,6 +1760,10 @@ def principal(argv=None) -> int:
     p.add_argument("url")
     opcoes_comuns(p)
 
+    p = sub.add_parser("recentes", help="lista os vídeos/áudios mais recentes destas pastas")
+    p.add_argument("pastas", nargs="+")
+    p.add_argument("--limite", type=int, default=15)
+
     p = sub.add_parser("velocidade", help="mede a velocidade dos modelos neste aparelho")
     p.add_argument("--amostra", required=True)
     p.add_argument("modelos", nargs="+", help="nome=caminho")
@@ -1765,7 +1814,7 @@ def principal(argv=None) -> int:
     funcoes = {"info": cmd_info, "aovivo": cmd_aovivo, "gravada": cmd_gravada,
                "arquivo": cmd_arquivo, "fiel": cmd_fiel, "legenda": cmd_legenda,
                "velocidade": cmd_velocidade, "dividir": cmd_dividir, "juntar": cmd_juntar,
-               "nuvem": cmd_nuvem, "nuvem-testar": cmd_nuvem_testar}
+               "nuvem": cmd_nuvem, "nuvem-testar": cmd_nuvem_testar, "recentes": cmd_recentes}
     return funcoes[a.cmd](a)
 
 

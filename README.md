@@ -57,6 +57,33 @@ tudo fica na sua pasta de usuário (`%LOCALAPPDATA%\TCETranscritor`).
 
 Para parar qualquer coisa: **Ctrl+C**. Para atualizar: `tce atualizar`.
 
+## No Mac (sem administrador)
+
+Funciona em Mac com chip Apple (M1, M2, M3...) e Intel, sem senha de administrador,
+sem Xcode e sem Homebrew. No chip Apple, o whisper.cpp usa a placa de vídeo do Mac
+e fica bem rápido.
+
+1. Abra o **Terminal** (Cmd+Espaço, digite `Terminal`, Enter).
+2. Cole a linha abaixo (Cmd+V) e tecle Enter:
+
+   ```
+   curl -fsSL https://raw.githubusercontent.com/FaithfulSnake/TCETranscritor/HEAD/instalar.sh | bash
+   ```
+
+3. Espere aparecer **Tudo pronto!** (baixa ~1 GB na primeira vez).
+4. Abra uma **janela nova** do Terminal (ou dê dois cliques em **TCE Transcritor** na Mesa)
+   e digite `tce`. Os TXT ficam em **Downloads/TCE-Transcricoes**.
+
+No Mac:
+
+- **Link do YouTube:** copie o link (Cmd+C) e escolha a opção no menu; o `tce` pergunta se
+  pode usar o link copiado.
+- **Vídeo ou áudio no Mac:** opção 5 (ARQUIVO) mostra os mais recentes de Downloads, Filmes,
+  Música, Mesa e Documentos; ou arraste o arquivo do Finder para a janela do Terminal.
+- Se o Mac perguntar se o Terminal pode acessar a pasta Downloads ou a Mesa, clique em **OK**.
+- Durante uma live, deixe o Mac na tomada e com a tampa aberta (o `tce` impede o Mac de
+  dormir enquanto trabalha).
+
 ## Como usar
 
 ### Live acontecendo agora

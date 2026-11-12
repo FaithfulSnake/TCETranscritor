@@ -33,7 +33,7 @@ jobs:
         run: |
           git clone --depth 1 --quiet --branch "$WHISPER_VERSAO" https://github.com/ggml-org/whisper.cpp w
           flags=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF
-                 -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
+                 -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
           if [ "${{ matrix.arq }}" = arm64 ]; then
             flags+=(-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON)
           else
@@ -50,7 +50,7 @@ jobs:
           curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSAO.tar.xz" | tar xJ
           cd "ffmpeg-$FFMPEG_VERSAO"
           ./configure --disable-doc --disable-ffplay --disable-debug --disable-autodetect \
-            --enable-securetransport --enable-zlib --enable-bzlib --enable-iconv \
+            --enable-securetransport --enable-zlib --enable-bzlib \
             --extra-cflags="-mmacosx-version-min=12.0" --extra-ldflags="-mmacosx-version-min=12.0" >/dev/null
           make -j "$(sysctl -n hw.ncpu)" >/dev/null
           cp ffmpeg "../out/ffmpeg-macos-${{ matrix.arq }}"
