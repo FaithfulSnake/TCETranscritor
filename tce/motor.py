@@ -1337,12 +1337,12 @@ def arquivos_recentes(pastas, limite: int = 15, profundidade: int = 4):
                     except OSError:
                         continue
                     if st.st_size > 100_000:
-                        achados.append((st.st_mtime, c))
+                        achados.append((st.st_mtime, c, (st.st_dev, st.st_ino)))
     vistos, lista = set(), []
-    for _, c in sorted(achados, reverse=True):
-        real = os.path.realpath(c)
-        if real not in vistos:
-            vistos.add(real)
+    for _, c, chave in sorted(achados, reverse=True):
+        # o mesmo arquivo por dois caminhos (no Mac, ~/downloads é a própria ~/Downloads)
+        if chave not in vistos:
+            vistos.add(chave)
             lista.append(c)
     return lista[:limite]
 
@@ -1369,14 +1369,16 @@ def cmd_velocidade(a) -> int:
     os.makedirs(pasta, exist_ok=True)
     wav = os.path.join(pasta, "amostra.wav")
     gravar_wav(wav, pcm)
-    avisar(f"Teste com {dur:.0f} s de fala, {a.threads} threads:\n")
+    base_extra = shlex.split(a.whisper_extra or "")
+    sem_gpu = " (sem GPU)" if ("-ng" in base_extra or "--no-gpu" in base_extra) else ""
+    avisar(f"Teste com {dur:.0f} s de fala, {a.threads} threads{sem_gpu}:\n")
     for item in a.modelos:
         nome, _, caminho = item.partition("=")
         if not os.path.isfile(caminho):
             continue
         fatores = []
         for extra in (["-bs", "1"], []):          # ao vivo (rápido) e fiel (beam search)
-            w = Whisper(a.whisper, caminho, None, a.threads, "en", extra)
+            w = Whisper(a.whisper, caminho, None, a.threads, "en", base_extra + extra)
             t = time.time()
             try:
                 w.transcrever(wav, "", dur)

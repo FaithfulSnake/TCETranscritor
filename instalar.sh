@@ -358,6 +358,10 @@ NOTIFICAR=0
 MODELO_NUVEM="turbo"
 PARTES_NUVEM=16
 
+# Opções extras do whisper.cpp (ex.: "-ng" = não usar a GPU). No Mac, o instalador
+# mede a GPU e o processador e escolhe sozinho.
+WHISPER_EXTRA=""
+
 # Palavras que ajudam o modelo a acertar nomes e termos (opcional)
 #PROMPT="Sessão do Tribunal de Contas do Estado do Maranhão. Conselheiro Fulano, conselheira Beltrana."
 EOF
@@ -392,24 +396,52 @@ testar() {
     morrer "o whisper.cpp não roda neste aparelho (instrução ilegal)"
   fi
   if echo "$saida" | grep -qi "country"; then
-    ok "o whisper.cpp transcreveu a amostra: $(echo "$saida" | tr -s ' \n' ' ' | cut -c1-80)"
+    ok "o whisper.cpp transcreveu a amostra: $(echo "$saida" | grep -i country | head -1 | sed 's/^ *//' | cut -c1-80)"
   else
     echo "$saida" | tail -15
     morrer "o teste do whisper.cpp falhou"
   fi
 }
 
+definir_config() {  # definir_config NOME VALOR  (troca a linha ou acrescenta no fim)
+  if grep -q "^$1=" "$CONFIG"; then
+    sed -i.bak "s|^$1=.*|$1=\"$2\"|" "$CONFIG" && rm -f "$CONFIG.bak"
+  else
+    printf '%s="%s"\n' "$1" "$2" >> "$CONFIG"
+  fi
+}
+
+velocidade_small() {  # velocidade_small OPCOES_EXTRAS -> saída do teste só com o modelo small
+  TCE_WHISPER_EXTRA="$1" TCE_MOSTRAR_RESULTADO=1 "$BIN_GLOBAL/tce" velocidade small 2>&1 || true
+}
+fator_small() {  # fator_small SAIDA COLUNA  (3 = ao vivo, 4 = versão fiel)
+  echo "$1" | awk -v c="$2" '$1 == "RESULTADO" && $2 == "small" {print $c; exit}'
+}
+
 escolher_modelo_aovivo() {
   [ -s "$TCE_DADOS/modelos/ggml-small-q8_0.bin" ] || return 0
   passo "Medindo a velocidade deste aparelho (uns 30 segundos)"
-  local res fator
-  res="$(TCE_MOSTRAR_RESULTADO=1 "$BIN_GLOBAL/tce" velocidade 2>&1 || true)"
+  local res extra="" res_cpu g c fator
+  res="$(velocidade_small "")"
+  if eh_mac && mac_arm; then
+    # chip Apple: a GPU (Metal) costuma ser bem mais rápida, mas numa máquina virtual
+    # pode ser mais lenta que o processador. Mede os dois e fica com o melhor.
+    res_cpu="$(velocidade_small "-ng")"
+    g="$(fator_small "$res" 4)"; c="$(fator_small "$res_cpu" 4)"
+    if [ -n "$c" ] && { [ -z "$g" ] || awk "BEGIN {exit !($c > 1.5 * $g)}"; }; then
+      extra="-ng"; res="$res_cpu"
+      aviso "a GPU deste Mac ficou mais lenta que o processador (${g:-falhou}x contra ${c}x); usando o processador"
+    elif [ -n "$g" ]; then
+      ok "usando a GPU do Mac (Metal): ${g}x; só o processador: ${c:-falhou}x"
+    fi
+    definir_config WHISPER_EXTRA "$extra"
+  fi
   echo "$res" | grep -E "ao vivo .*fiel" || true
-  fator="$(echo "$res" | awk '$1 == "RESULTADO" && $2 == "small" {print $3; exit}')"
+  fator="$(fator_small "$res" 3)"
   if [ -n "$fator" ] && awk "BEGIN {exit !($fator < 1.6)}"; then
     aviso "o modelo small é lento demais para ao vivo neste aparelho; usando o base"
     "$BIN_GLOBAL/tce" modelos baixar base || true
-    sed -i.bak 's/^MODELO_AOVIVO=.*/MODELO_AOVIVO="base"/' "$CONFIG" && rm -f "$CONFIG.bak"
+    definir_config MODELO_AOVIVO base
   fi
 }
 

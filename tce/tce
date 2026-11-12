@@ -27,6 +27,7 @@ PROMPT=""
 REPO=""
 MODELO_NUVEM="turbo"
 PARTES_NUVEM=16
+WHISPER_EXTRA=""                    # ex.: "-ng" = não usar a GPU (o instalador do Mac escolhe)
 # shellcheck source=/dev/null
 [ -f "$TCE_CONFIG" ] && . "$TCE_CONFIG"
 
@@ -75,6 +76,7 @@ export TCE_DADOS TCE_WHISPER="$WHISPER" TCE_VAD="$MODELOS_DIR/$VAD_ARQ" \
        TCE_GUARDAR_AUDIO="$GUARDAR_AUDIO" TCE_REPO="$REPO" TCE_TOKEN \
        TCE_MODELO_NUVEM="$MODELO_NUVEM" TCE_PARTES_NUVEM="$PARTES_NUVEM"
 [ -n "$PROMPT" ] && export TCE_PROMPT="$PROMPT"
+export TCE_WHISPER_EXTRA="${TCE_WHISPER_EXTRA-$WHISPER_EXTRA}"   # a variável de ambiente vale mais
 
 # ---------------------------------------------------------------------------
 negrito() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -374,8 +376,9 @@ cmd_velocidade() {
   checar_instalacao
   local amostra="$TCE_DADOS/whisper.cpp/samples/jfk.wav"
   [ -f "$amostra" ] || { falha "Amostra não encontrada ($amostra). Rode: tce reparar"; return 1; }
-  local args=() nome arq
-  for nome in tiny base small medium turbo turbo-q8 large; do
+  local args=() nome arq nomes="tiny base small medium turbo turbo-q8 large"
+  [ $# -gt 0 ] && nomes="$*"              # tce velocidade small  -> só os modelos pedidos
+  for nome in $nomes; do
     arq="$MODELOS_DIR/$(arquivo_modelo "$nome")"
     [ -s "$arq" ] && args+=("$nome=$arq")
   done
@@ -587,7 +590,7 @@ case "$cmd" in
   fiel)                       cmd_fiel "$@" ;;
   nuvem)                      cmd_nuvem "$@" ;;
   nuvem-configurar)           cmd_nuvem_configurar ;;
-  velocidade|teste)           cmd_velocidade ;;
+  velocidade|teste)           cmd_velocidade "$@" ;;
   modelos|modelo)             cmd_modelos "$@" ;;
   atualizar|update)           cmd_atualizar ;;
   reparar)                    cmd_reparar ;;

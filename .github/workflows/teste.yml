@@ -173,7 +173,9 @@ jobs:
           TCE_FONTE="$GITHUB_WORKSPACE" /bin/bash instalar.sh
           head -2 ~/.local/bin/tce
       - name: Transcrever 3 min de fala pelo comando tce
+        timeout-minutes: 20
         run: |
+          grep -E '^(WHISPER_EXTRA|MODELO_AOVIVO|MODELO_FIEL)=' ~/.config/tce/config
           curl -fsSL --retry 5 -o "$RUNNER_TEMP/completo.mp3" "$AMOSTRA_URL"
           ~/.local/share/tce/bin/ffmpeg -nostdin -loglevel error -y -i "$RUNNER_TEMP/completo.mp3" \
             -t 180 -c copy "$HOME/Downloads/Sessão teste.mp3"
