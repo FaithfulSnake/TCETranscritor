@@ -497,12 +497,11 @@ class FonteFFmpeg:
 
     def fechar(self) -> str:
         try:
-            self.p.stdout.close()
+            self.p.terminate()
         except Exception:
             pass
-        try:
-            self.p.terminate()
-            _, err = self.p.communicate(timeout=10)
+        try:   # communicate() lê o resto e fecha os canais (fechar antes quebra no Windows)
+            _, err = self.p.communicate(timeout=15)
             return (err or b"").decode("utf-8", "replace").strip()
         except Exception:
             return ""

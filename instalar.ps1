@@ -156,6 +156,7 @@ try {
     Set-Content -Encoding Ascii -Path $cmd -Value @(
         '@echo off',
         'chcp 65001 >nul',
+        'set PYTHONUTF8=1',
         '"%~dp0py\python.exe" "%~dp0app\tce\tce_windows.py" %*'
     )
     $caminhoUsuario = [Environment]::GetEnvironmentVariable('Path', 'User')
