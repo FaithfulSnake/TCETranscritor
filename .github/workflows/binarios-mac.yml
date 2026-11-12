@@ -1,0 +1,79 @@
+name: Binários para Mac
+
+# Compila o whisper.cpp (com Metal no Apple Silicon) e o ffmpeg para Mac e publica
+# na release "binarios-mac" deste repositório. O instalador do Mac baixa daqui:
+# assim o Mac não precisa de Xcode, Homebrew nem senha de administrador.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/binarios-mac.yml
+
+permissions:
+  contents: write
+
+env:
+  WHISPER_VERSAO: v1.9.5
+  FFMPEG_VERSAO: "8.0"
+
+jobs:
+  compilar:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arq: arm64
+          - runner: macos-15-intel
+            arq: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: whisper.cpp
+        run: |
+          git clone --depth 1 --quiet --branch "$WHISPER_VERSAO" https://github.com/ggml-org/whisper.cpp w
+          flags=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF
+                 -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
+          if [ "${{ matrix.arq }}" = arm64 ]; then
+            flags+=(-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON)
+          else
+            flags+=(-DGGML_METAL=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON)
+          fi
+          cmake -S w -B wb "${flags[@]}" >/dev/null
+          cmake --build wb -j "$(sysctl -n hw.ncpu)" --target whisper-cli >/dev/null
+          mkdir -p out
+          cp wb/bin/whisper-cli "out/whisper-cli-macos-${{ matrix.arq }}"
+          otool -L "out/whisper-cli-macos-${{ matrix.arq }}"
+      - name: ffmpeg (só com bibliotecas do próprio macOS)
+        run: |
+          [ "${{ matrix.arq }}" = x86_64 ] && brew install nasm >/dev/null
+          curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSAO.tar.xz" | tar xJ
+          cd "ffmpeg-$FFMPEG_VERSAO"
+          ./configure --disable-doc --disable-ffplay --disable-debug --disable-autodetect \
+            --enable-securetransport --enable-zlib --enable-bzlib --enable-iconv \
+            --extra-cflags="-mmacosx-version-min=12.0" --extra-ldflags="-mmacosx-version-min=12.0" >/dev/null
+          make -j "$(sysctl -n hw.ncpu)" >/dev/null
+          cp ffmpeg "../out/ffmpeg-macos-${{ matrix.arq }}"
+          cp ffprobe "../out/ffprobe-macos-${{ matrix.arq }}"
+      - name: Conferir (só bibliotecas do sistema, roda de verdade)
+        run: |
+          for f in out/*; do
+            echo "== $f"; otool -L "$f" | tail -n +2
+            if otool -L "$f" | grep -E "/opt/homebrew|/usr/local"; then echo "dependência fora do sistema em $f"; exit 1; fi
+          done
+          "out/ffmpeg-macos-${{ matrix.arq }}" -hide_banner -protocols | grep -q https
+          "out/ffmpeg-macos-${{ matrix.arq }}" -hide_banner -version | head -1
+          curl -fsSL -o jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.5/samples/jfk.wav
+          curl -fsSL -o tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q8_0.bin
+          "out/whisper-cli-macos-${{ matrix.arq }}" -m tiny.bin -f jfk.wav -l en -nt -np | tee saida.txt
+          grep -qi country saida.txt
+      - name: Publicar na release binarios-mac
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view binarios-mac --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create binarios-mac --repo "$GITHUB_REPOSITORY" --prerelease \
+              --title "Binários para Mac (whisper.cpp e ffmpeg)" \
+              --notes "Usados pelo instalador do Mac. Gerados pelo workflow binarios-mac.yml." || true
+          sleep 5
+          gh release upload binarios-mac out/* --clobber --repo "$GITHUB_REPOSITORY"
