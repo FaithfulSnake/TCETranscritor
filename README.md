@@ -150,7 +150,9 @@ Depende do celular; rode `tce velocidade` para ver os números do seu. Referênc
   noite). Deixe na tomada, ou use a **NUVEM**, ou a opção **RÁPIDA** (`small`, que no
   teste ficou bom em português e roda ~2,5x mais rápido que o tempo real).
 - **Mac**: no chip Apple o whisper.cpp pode usar a GPU (Metal); o instalador mede a GPU e o
-  processador e fica com o mais rápido. Rode `tce velocidade` para ver os números do seu Mac.
+  processador e fica com o mais rápido. No teste automático num Mac virtual do GitHub (chip
+  M1 com só 3 núcleos), 3 min de áudio com o modelo `small` ficaram prontos em 34 s (5x o
+  tempo real). Rode `tce velocidade` para ver os números do seu Mac.
 - **NUVEM**: a sessão é dividida em até 16 partes transcritas ao mesmo tempo com o
   modelo grande. No teste, 30 min de áudio em 3 partes ficaram prontos em 22 min
   (já contando a primeira compilação); cada máquina faz ~0,6x o tempo real, então
