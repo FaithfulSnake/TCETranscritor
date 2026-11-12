@@ -149,6 +149,8 @@ Depende do celular; rode `tce velocidade` para ver os números do seu. Referênc
   intermediário, algo entre 1x e 3x a duração da sessão (4 h de sessão podem levar a
   noite). Deixe na tomada, ou use a **NUVEM**, ou a opção **RÁPIDA** (`small`, que no
   teste ficou bom em português e roda ~2,5x mais rápido que o tempo real).
+- **Mac**: no chip Apple o whisper.cpp pode usar a GPU (Metal); o instalador mede a GPU e o
+  processador e fica com o mais rápido. Rode `tce velocidade` para ver os números do seu Mac.
 - **NUVEM**: a sessão é dividida em até 16 partes transcritas ao mesmo tempo com o
   modelo grande. No teste, 30 min de áudio em 3 partes ficaram prontos em 22 min
   (já contando a primeira compilação); cada máquina faz ~0,6x o tempo real, então
@@ -196,6 +198,8 @@ colando um link direto de arquivo de áudio.
 | Não acho o TXT | `tce pasta` mostra onde está (normalmente Download/TCE-Transcricoes) |
 | Qualquer outra coisa | `tce diagnostico` confere yt-dlp, YouTube, whisper e modelos (e se ajusta sozinho quando dá) |
 | Celular fraco demais para o AO VIVO | na configuração (`~/.config/tce/config`) ponha `MODELO_AOVIVO="base"` |
+| Mac: `zsh: command not found: tce` | abra uma janela **nova** do Terminal (ou rode `source ~/.zshrc`) |
+| Mac: `Operation not permitted` ao salvar | Ajustes do Sistema > Privacidade e Segurança > Arquivos e Pastas > Terminal > ligue **Pasta Downloads** |
 
 ## Como funciona
 
