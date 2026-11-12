@@ -47,7 +47,11 @@ try:  # opcional: só deixa a procura de silêncio mais rápida
 except Exception:  # pragma: no cover
     _np = None
 
-VERSAO = "1.0.0"
+VERSAO = "1.1.0"
+WINDOWS = os.name == "nt"
+# Filhos (whisper, ffmpeg, yt-dlp) não recebem o Ctrl+C do terminal: quem decide parar é o motor.
+SESSAO_PROPRIA = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS
+                  else {"start_new_session": True})
 TAXA = 16000           # amostras por segundo
 BPS = TAXA * 2         # bytes por segundo (PCM 16 bits mono)
 LINHA = "=" * 72
@@ -241,6 +245,9 @@ class Whisper:
         if vad:
             cmd += ["--vad", "-vm", self.vad_modelo]
         if prompt:
+            if WINDOWS:   # argv do whisper-cli no Windows não é UTF-8: tira os acentos do prompt
+                prompt = "".join(c for c in unicodedata.normalize("NFKD", prompt)
+                                 if not unicodedata.combining(c)).encode("ascii", "ignore").decode()
             cmd += ["--prompt", prompt]
         return cmd + self.extra
 
@@ -259,7 +266,7 @@ class Whisper:
                 # sessão própria: o Ctrl+C do terminal não derruba o whisper no meio do bloco
                 r = subprocess.run(self._comando(wav, base, prompt, vad),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   timeout=limite, start_new_session=True)
+                                   timeout=limite, **SESSAO_PROPRIA)
             except subprocess.TimeoutExpired:
                 ultimo = f"o whisper passou de {int(limite)} s sem responder"
                 continue
@@ -477,7 +484,7 @@ class FonteFFmpeg:
             cmd += ["-t", f"{max(0.0, fim - inicio):.3f}"]
         cmd += ["-vn", "-ac", "1", "-ar", str(TAXA), "-acodec", "pcm_s16le", "-f", "s16le", "pipe:1"]
         self.p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, start_new_session=True)
+                                  stderr=subprocess.PIPE, **SESSAO_PROPRIA)
         self.acabou = False
 
     def ler(self, n: int) -> bytes:
@@ -631,6 +638,8 @@ class Captura(threading.Thread):
         with self.lock:
             for p in self.procs:
                 try:
+                    if WINDOWS:
+                        raise OSError
                     os.killpg(p.pid, signal.SIGTERM)
                 except Exception:
                     try:
@@ -644,12 +653,12 @@ class Captura(threading.Thread):
              "--hls-use-mpegts", "--wait-for-video", "30", "--retries", "10",
              "--fragment-retries", "10", "-f", self.formato, "-o", "-", self.url],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
-            start_new_session=True)
+            **SESSAO_PROPRIA)
         f = subprocess.Popen(
             [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
              "-i", "pipe:0", "-vn", "-ac", "1", "-ar", str(TAXA),
              "-acodec", "pcm_s16le", "-f", "s16le", "pipe:1"],
-            stdin=y.stdout, stdout=subprocess.PIPE, stderr=log, start_new_session=True)
+            stdin=y.stdout, stdout=subprocess.PIPE, stderr=log, **SESSAO_PROPRIA)
         y.stdout.close()
         with self.lock:
             self.procs = [y, f]
@@ -1628,6 +1637,13 @@ def cmd_nuvem(a) -> int:
 # linha de comando
 # ----------------------------------------------------------------------------
 
+def pasta_saida_padrao() -> str:
+    for base in ("~/storage/downloads", "~/Downloads"):
+        if os.path.isdir(os.path.expanduser(base)):
+            return os.path.join(os.path.expanduser(base), "TCE-Transcricoes")
+    return os.path.expanduser("~/TCE-Transcricoes")
+
+
 def threads_padrao() -> int:
     try:
         return max(1, min(4, os.cpu_count() or 4))
@@ -1647,7 +1663,7 @@ def opcoes_comuns(p: argparse.ArgumentParser) -> None:
     p.add_argument("--whisper-extra", default=os.environ.get("TCE_WHISPER_EXTRA", ""))
     p.add_argument("--bloco", type=float, default=None,
                    help="segundos por bloco (ao vivo ~25, arquivos ~300)")
-    p.add_argument("--pasta-saida", default=os.environ.get("TCE_SAIDA", os.path.expanduser("~/TCE-Transcricoes")))
+    p.add_argument("--pasta-saida", default=os.environ.get("TCE_SAIDA", pasta_saida_padrao()))
     p.add_argument("--dados", default=dados)
     p.add_argument("--sessao", default=None)
     p.add_argument("--ffmpeg", default=os.environ.get("TCE_FFMPEG", "ffmpeg"))

@@ -38,6 +38,25 @@ ponha `NOTIFICAR=1` na configuração) e **Termux:Widget** (atalho na tela inici
 Antes de sessões longas: Configurações do Android > Apps > Termux > Bateria >
 **Sem restrições**, e deixe o celular na tomada.
 
+## No computador com Windows (sem administrador)
+
+Também roda no PC, e lá fica mais rápido que no celular. Não precisa de administrador:
+tudo fica na sua pasta de usuário (`%LOCALAPPDATA%\TCETranscritor`).
+
+1. Abra o **Prompt de Comando** (tecla Windows, digite `cmd`, Enter).
+2. Cole a linha abaixo (botão direito do mouse cola) e tecle Enter:
+
+   ```
+   powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=3072; irm https://raw.githubusercontent.com/FaithfulSnake/TCETranscritor/HEAD/instalar.ps1 | iex"
+   ```
+
+3. Espere aparecer **Tudo pronto!** (baixa ~1 GB na primeira vez).
+4. Abra um **cmd novo** (ou o atalho **TCE Transcritor** que aparece na área de trabalho)
+   e digite `tce`. Os comandos são os mesmos do celular (`tce aovivo LINK`,
+   `tce gravada LINK`, `tce arquivo`...). Os TXT ficam em **Downloads\TCE-Transcricoes**.
+
+Para parar qualquer coisa: **Ctrl+C**. Para atualizar: `tce atualizar`.
+
 ## Como usar
 
 ### Live acontecendo agora

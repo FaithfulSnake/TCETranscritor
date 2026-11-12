@@ -30,7 +30,7 @@ jobs:
       - name: shellcheck
         run: shellcheck -S warning instalar.sh tce/tce testes/rodar.sh testes/termux-ci.sh
       - name: Python compila
-        run: python3 -m py_compile tce/motor.py testes/yt-dlp-falso
+        run: python3 -m py_compile tce/motor.py tce/tce_windows.py testes/yt-dlp-falso
 
   motor-linux:
     runs-on: ubuntu-latest
@@ -101,4 +101,49 @@ jobs:
         if: always()
         with:
           name: resultados-termux
+          path: saida
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar com o instalador do Windows (PowerShell 5.1, sem administrador)
+        shell: powershell
+        env:
+          TCE_TESTE: "1"
+          TCE_MODELOS: "small"
+        run: |
+          $env:TCE_FONTE = $env:GITHUB_WORKSPACE
+          Get-Content -Raw -Encoding UTF8 instalar.ps1 | Invoke-Expression
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "instalador saiu com $LASTEXITCODE" }
+          Get-ChildItem "$env:LOCALAPPDATA\TCETranscritor\whisper" | Select-Object Name, Length | Format-Table
+      - name: Transcrever 3 min de fala pelo comando tce (nome com acento)
+        shell: powershell
+        run: |
+          $base = "$env:LOCALAPPDATA\TCETranscritor"
+          curl.exe -fsSL --retry 5 -o "$env:TEMP\completo.mp3" $env:AMOSTRA_URL
+          $nome = Join-Path $env:TEMP ("Sess" + [char]0x00E3 + "o teste.mp3")
+          & "$base\bin\ffmpeg.exe" -nostdin -loglevel error -y -i "$env:TEMP\completo.mp3" -t 180 -c copy $nome
+          Add-Content -Path "$base\config.ini" -Value "MODELO_FIEL=small"
+          & "$base\tce.cmd" arquivo $nome
+          if ($LASTEXITCODE -ne 0) { throw "tce arquivo saiu com $LASTEXITCODE" }
+      - name: Conferir o TXT
+        shell: powershell
+        run: |
+          $txt = Get-ChildItem "$env:USERPROFILE\Downloads\TCE-Transcricoes" -Filter *.txt | Select-Object -First 1
+          Write-Host $txt.FullName
+          Get-Content -Encoding UTF8 $txt.FullName
+          if (-not (Select-String -Path $txt.FullName -Pattern 'catilina' -Quiet)) { throw 'não reconheceu a fala' }
+          New-Item -ItemType Directory -Force saida | Out-Null
+          Copy-Item $txt.FullName saida\
+      - name: Comandos do menu
+        shell: cmd
+        run: |
+          call "%LOCALAPPDATA%\TCETranscritor\tce.cmd" ajuda
+          call "%LOCALAPPDATA%\TCETranscritor\tce.cmd" modelos
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resultados-windows
           path: saida
