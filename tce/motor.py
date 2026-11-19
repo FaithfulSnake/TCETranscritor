@@ -1470,7 +1470,21 @@ class GitHub:
         if isinstance(dados, (dict, list)):
             corpo = json.dumps(dados).encode()
             h["Content-Type"] = "application/json"
-        pedido = urllib.request.Request(url, data=corpo, method=metodo, headers=h)
+        # GET pode repetir sem risco: a internet do celular oscila (DNS, troca Wi-Fi/dados)
+        tentativas = 8 if metodo == "GET" else 1
+        for n in range(tentativas):
+            pedido = urllib.request.Request(url, data=corpo, method=metodo, headers=h)
+            try:
+                return self._abrir(pedido, metodo, bruto, timeout)
+            except urllib.error.HTTPError:
+                raise
+            except (urllib.error.URLError, OSError) as e:
+                if n + 1 >= tentativas:
+                    raise RuntimeError(f"sem conexão com o GitHub ({getattr(e, 'reason', e)})")
+                time.sleep(min(60, 10 * (n + 1)))
+        raise RuntimeError("sem conexão com o GitHub")
+
+    def _abrir(self, pedido, metodo, bruto, timeout):
         try:
             with urllib.request.urlopen(pedido, timeout=timeout) as r:
                 conteudo = r.read()
@@ -1536,6 +1550,53 @@ def cmd_nuvem_testar(a) -> int:
         avisar("Repositório público: a nuvem é gratuita e sem limite de minutos, "
                "mas os TXT ficam visíveis para quem abrir o repositório.")
     return 0
+
+
+def cmd_nuvem_baixar(a) -> int:
+    """Baixa um TXT pronto da nuvem (pasta transcricoes/ do repositório): o mais recente,
+    ou o que tiver TRECHO no nome. Serve para quando o celular parou de esperar."""
+    token = ler_token(a)
+    if not token:
+        return 1
+    gh = GitHub(a.repo, token)
+    try:
+        ramo = gh.req("GET", f"/repos/{a.repo}")["default_branch"]
+        itens = gh.req("GET", f"/repos/{a.repo}/contents/transcricoes?ref={ramo}") or []
+        nomes = [i["name"] for i in itens if i.get("name", "").endswith(".txt")]
+        if a.trecho:
+            t = a.trecho.lower()
+            nomes = [n for n in nomes if t in n.lower()]
+        else:   # o mais recente: o do último commit que mexeu na pasta
+            commits = gh.req("GET", f"/repos/{a.repo}/commits?sha={ramo}&path=transcricoes&per_page=5") or []
+            recentes = []
+            for c in commits:
+                det = gh.req("GET", f"/repos/{a.repo}/commits/{c['sha']}")
+                for f in det.get("files", []):
+                    n = os.path.basename(f["filename"])
+                    if f["filename"].startswith("transcricoes/") and n in nomes and n not in recentes:
+                        recentes.append(n)
+                if recentes:
+                    break
+            nomes = recentes[:1]
+        if not nomes:
+            erro("Nenhuma transcrição encontrada na nuvem" + (f" com '{a.trecho}'" if a.trecho else "") + ".")
+            return 1
+        destino_pasta = os.path.expanduser(a.pasta_saida)
+        os.makedirs(destino_pasta, exist_ok=True)
+        for nome in nomes[:5]:
+            conteudo = gh.req("GET", f"/repos/{a.repo}/contents/transcricoes/"
+                                     f"{urllib.parse.quote(nome)}?ref={ramo}",
+                              cabecalhos={"Accept": "application/vnd.github.raw"},
+                              bruto=True, timeout=180)
+            destino = caminho_livre(os.path.join(destino_pasta, nome))
+            with open(destino, "wb") as f:
+                f.write(conteudo)
+            avisar_galeria(destino)
+            avisar(f">> TXT salvo em:\n   {destino}")
+        return 0
+    except RuntimeError as e:
+        erro(str(e))
+        return 1
 
 
 def cmd_nuvem(a) -> int:
@@ -1635,6 +1696,7 @@ def cmd_nuvem(a) -> int:
         avisar(f"   Acompanhe também pelo navegador: {run['html_url']}")
 
         avisar(">> 4/4 Transcrevendo na nuvem (pode deixar o celular de lado)...")
+        avisar("   (se a espera parar, a nuvem continua; depois rode: tce nuvem-baixar)")
         inicio = time.time()
         while True:
             time.sleep(30)
@@ -1642,6 +1704,7 @@ def cmd_nuvem(a) -> int:
                 r_ = gh.req("GET", f"/repos/{a.repo}/actions/runs/{run['id']}")
             except RuntimeError as e:   # internet do celular oscilou: tenta de novo
                 avisar(f"   (sem resposta do GitHub: {e}; tentando de novo)")
+                time.sleep(30)
                 continue
             try:
                 jobs = gh.req("GET", f"/repos/{a.repo}/actions/runs/{run['id']}/jobs?per_page=50")["jobs"]
@@ -1796,6 +1859,12 @@ def principal(argv=None) -> int:
     p.add_argument("--repo", default=os.environ.get("TCE_REPO", "FaithfulSnake/TCETranscritor"))
     p.add_argument("--token-arquivo", default=os.environ.get("TCE_TOKEN", "~/.config/tce/token"))
 
+    p = sub.add_parser("nuvem-baixar", help="baixa um TXT já pronto na nuvem (o mais recente)")
+    p.add_argument("trecho", nargs="?", default="", help="parte do nome do TXT (opcional)")
+    p.add_argument("--repo", default=os.environ.get("TCE_REPO", "FaithfulSnake/TCETranscritor"))
+    p.add_argument("--token-arquivo", default=os.environ.get("TCE_TOKEN", "~/.config/tce/token"))
+    p.add_argument("--pasta-saida", default=os.environ.get("TCE_SAIDA", pasta_saida_padrao()))
+
     p = sub.add_parser("nuvem", help="transcreve no GitHub Actions (link, arquivo ou live gravada)")
     p.add_argument("entrada", help="link do YouTube, arquivo de áudio ou pasta de uma live gravada")
     p.add_argument("--titulo", default=None)
@@ -1818,7 +1887,8 @@ def principal(argv=None) -> int:
     funcoes = {"info": cmd_info, "aovivo": cmd_aovivo, "gravada": cmd_gravada,
                "arquivo": cmd_arquivo, "fiel": cmd_fiel, "legenda": cmd_legenda,
                "velocidade": cmd_velocidade, "dividir": cmd_dividir, "juntar": cmd_juntar,
-               "nuvem": cmd_nuvem, "nuvem-testar": cmd_nuvem_testar, "recentes": cmd_recentes}
+               "nuvem": cmd_nuvem, "nuvem-testar": cmd_nuvem_testar, "recentes": cmd_recentes,
+               "nuvem-baixar": cmd_nuvem_baixar}
     return funcoes[a.cmd](a)
 
 

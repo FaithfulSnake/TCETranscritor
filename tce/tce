@@ -530,6 +530,7 @@ TCE Transcritor - transcrição de lives e vídeos (offline, grátis)
   tce nuvem LINK|ARQUIVO  transcrição integral no GitHub Actions (rápida)
   tce nuvem fiel          manda a última live gravada para a nuvem
   tce nuvem-configurar    liga a nuvem (uma vez só)
+  tce nuvem-baixar        baixa o TXT mais recente que a nuvem terminou
   tce velocidade          mede a velocidade dos modelos neste $APARELHO
   tce modelos [baixar N]  lista/baixa modelos (base, small, turbo, large)
   tce atualizar           atualiza scripts e yt-dlp
@@ -590,6 +591,7 @@ case "$cmd" in
   fiel)                       cmd_fiel "$@" ;;
   nuvem)                      cmd_nuvem "$@" ;;
   nuvem-configurar)           cmd_nuvem_configurar ;;
+  nuvem-baixar|baixar)        motor nuvem-baixar "$@" ;;
   velocidade|teste)           cmd_velocidade "$@" ;;
   modelos|modelo)             cmd_modelos "$@" ;;
   atualizar|update)           cmd_atualizar ;;

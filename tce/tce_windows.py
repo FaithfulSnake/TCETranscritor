@@ -303,6 +303,10 @@ def cmd_nuvem(args):
     return motor_rodar(["nuvem", alvo, "--token-arquivo", TOKEN] + args[1:])
 
 
+def cmd_nuvem_baixar(args):
+    return motor_rodar(["nuvem-baixar"] + args[:1] + ["--token-arquivo", TOKEN])
+
+
 def cmd_nuvem_configurar(args):
     titulo("Configurar a transcrição na nuvem (GitHub Actions, grátis)")
     print(f"""Crie uma chave de acesso (token) no navegador:
@@ -406,6 +410,7 @@ def cmd_ajuda(args):
   tce fiel                refaz a última live gravada com o modelo grande
   tce nuvem LINK          transcrição integral no GitHub Actions
   tce nuvem-configurar    liga a nuvem (uma vez só)
+  tce nuvem-baixar        baixa o TXT mais recente que a nuvem terminou
   tce velocidade          mede a velocidade dos modelos neste computador
   tce modelos [baixar N]  lista/baixa modelos (base, small, turbo, large)
   tce diagnostico         confere yt-dlp, YouTube, whisper e modelos
@@ -457,7 +462,8 @@ COMANDOS = {
     "menu": cmd_menu, "aovivo": cmd_aovivo, "ao-vivo": cmd_aovivo, "live": cmd_aovivo,
     "gravada": cmd_gravada, "video": cmd_gravada, "rapida": cmd_rapida, "rápida": cmd_rapida,
     "legenda": cmd_legenda, "arquivo": cmd_arquivo, "fiel": cmd_fiel, "nuvem": cmd_nuvem,
-    "nuvem-configurar": cmd_nuvem_configurar, "velocidade": cmd_velocidade,
+    "nuvem-configurar": cmd_nuvem_configurar, "nuvem-baixar": cmd_nuvem_baixar,
+    "baixar": cmd_nuvem_baixar, "velocidade": cmd_velocidade,
     "teste": cmd_velocidade, "modelos": cmd_modelos, "diagnostico": cmd_diagnostico,
     "diagnóstico": cmd_diagnostico, "atualizar": cmd_atualizar, "pasta": cmd_pasta,
     "ajuda": cmd_ajuda, "help": cmd_ajuda, "-h": cmd_ajuda, "--help": cmd_ajuda,
